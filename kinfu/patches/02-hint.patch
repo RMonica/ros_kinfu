@@ -1,0 +1,190 @@
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
+index 10b2b87..aa773a6 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
+@@ -149,18 +149,37 @@ namespace pcl
+           int
+           rows ();
+ 
++          struct THint
++          {
++            enum Type
++            {
++              HINT_TYPE_NONE = 0,
++              HINT_TYPE_HINT,
++              HINT_TYPE_FORCED,
++              MAX_HINT_TYPE
++            };
++
++            THint(Type t,Eigen::Affine3f h): transform(h),type(t) {}
++            THint(): type(HINT_TYPE_NONE) {}
++
++            Eigen::Affine3f transform;
++            Type type;
++
++            EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
++          };
++
+           /** \brief Processes next frame.
+             * \param[in] depth next frame with values in millimeters
+             * \return true if can render 3D view.
+             */
+-          bool operator() (const DepthMap& depth);
++          bool operator() (const DepthMap& depth,const THint & hint = THint());
+ 
+           /** \brief Processes next frame (both depth and color integration). Please call initColorIntegration before invpoking this.
+             * \param[in] depth next depth frame with values in millimeters
+             * \param[in] colors next RGB frame
+             * \return true if can render 3D view.
+             */
+-          bool operator() (const DepthMap& depth, const View& colors);
++          bool operator() (const DepthMap& depth, const View& colors, const THint & hint = THint());
+ 
+           /** \brief Returns camera pose at given time, default the last pose
+             * \param[in] time Index of frame for which camera pose is returned.
+diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
+index b154d24..7d12216 100644
+--- a/gpu/kinfu_large_scale/src/kinfu.cpp
++++ b/gpu/kinfu_large_scale/src/kinfu.cpp
+@@ -276,9 +276,8 @@ pcl::gpu::kinfuLS::KinfuTracker::reset ()
+     color_volume_->reset ();    
+   
+   // reset estimated pose
+-  last_estimated_rotation_= Eigen::Matrix3f::Identity ();
+-  last_estimated_translation_= Vector3f (volume_size_, volume_size_, volume_size_) * 0.5f - Vector3f (0, 0, volume_size_ / 2 * 1.2f);
+-  
++  last_estimated_rotation_= init_Rcam_;
++  last_estimated_translation_= init_tcam_;
+   
+   lost_=false;
+   has_shifted_=false;
+@@ -434,7 +433,8 @@ pcl::gpu::kinfuLS::KinfuTracker::performICP(const Intr& cam_intrinsics, Matrix3f
+       MapArr& nmap_g_prev = nmaps_g_prev_[level_index];
+       
+       // We need to transform the maps from global to local coordinates
+-      Mat33&  rotation_id = device_cast<Mat33> (rmats_[0]); // Identity Rotation Matrix. Because we only need translation
++      Eigen::Matrix3f ri = Eigen::Matrix3f::Identity();
++      Mat33&  rotation_id = device_cast<Mat33> (/*rmats_[0]*/ri); // Identity Rotation Matrix. Because we only need translation
+       float3 cube_origin = (getCyclicalBufferStructure ())->origin_metric;
+       cube_origin = -cube_origin;
+       
+@@ -593,13 +593,22 @@ pcl::gpu::kinfuLS::KinfuTracker::performPairWiseICP(const Intr cam_intrinsics, M
+ }
+ 
+ bool
+-pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw)
++pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THint & hint)
+ { 
+   // Intrisics of the camera
+   Intr intr (fx_, fy_, cx_, cy_);
+   
+   // Physical volume size (meters)
+   float3 device_volume_size = device_cast<const float3> (tsdf_volume_->getSize());
++
++  const bool has_hint = (hint.type != THint::HINT_TYPE_NONE);
++  const bool has_forced_hint = has_hint && (hint.type == THint::HINT_TYPE_FORCED);
++
++  if (has_hint && global_time_ == 0)
++  {
++    rmats_[0] = hint.transform.linear();
++    tvecs_[0] = hint.transform.translation();
++  }
+   
+   // process the incoming raw depth map
+   prepareMaps (depth_raw, intr);
+@@ -610,7 +619,7 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw)
+   ///////////////////////////////////////////////////////////////////////////////////////////
+   // Initialization at first frame
+   if (global_time_ == 0) // this is the frist frame, the tsdf volume needs to be initialized
+-  {  
++  {
+     // Initial rotation
+     Matrix3frm initial_cam_rot = rmats_[0]; //  [Ri|ti] - pos of camera
+     Matrix3frm initial_cam_rot_inv = initial_cam_rot.inverse ();
+@@ -643,17 +652,33 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw)
+   ///////////////////////////////////////////////////////////////////////////////////////////
+   // Iterative Closest Point
+   // Get the last-known pose
+-  Matrix3frm last_known_global_rotation = rmats_[global_time_ - 1];            // [Ri|ti] - pos of camera, i.e.
+-  Vector3f   last_known_global_translation = tvecs_[global_time_ - 1];          // transform from camera to global coo space for (i-1)th camera pose
++  Matrix3frm last_known_global_rotation = has_hint ? Matrix3frm(hint.transform.rotation()) : rmats_[global_time_ - 1];
++    // [Ri|ti] - pos of camera, i.e.
++  Vector3f last_known_global_translation = has_hint ? hint.transform.translation() : tvecs_[global_time_ - 1];
++    // transform from camera to global coo space for (i-1)th camera pose
++
+   // Declare variables to host ICP results 
+   Matrix3frm current_global_rotation;
+   Vector3f current_global_translation;
++  // if the hint is forced, skip ICP and use it
++  if (has_forced_hint)
++  {
++    rmats_.push_back(last_known_global_rotation);
++    tvecs_.push_back(last_known_global_translation);
++    last_estimated_rotation_ = last_known_global_rotation;
++    last_estimated_translation_ = last_known_global_translation;
++    current_global_rotation = last_known_global_rotation;
++    current_global_translation = last_known_global_translation;
++  }
++  else
++  {
++  //   -- RMonica: indentation level increase skipped to reduce diff size --
+   // Call ICP
+   if(!performICP(intr, last_known_global_rotation, last_known_global_translation, current_global_rotation, current_global_translation))
+   {
+     // ICP based on synthetic maps failed -> try to estimate the current camera pose based on previous and current raw maps
+     Matrix3frm delta_rotation;
+-    Vector3f delta_translation;    
++    Vector3f delta_translation;
+     if(!performPairWiseICP(intr, delta_rotation, delta_translation))
+     {
+       // save current vertex and normal maps
+@@ -672,12 +697,14 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw)
+   {
+     // ICP based on synthetic maps succeeded
+     // Save newly-computed pose
+-    rmats_.push_back (current_global_rotation); 
++    rmats_.push_back (current_global_rotation);
+     tvecs_.push_back (current_global_translation);
+     // Update last estimated pose to current pairwise ICP result
+     last_estimated_translation_ = current_global_translation;
+     last_estimated_rotation_ = current_global_rotation;
+-  }  
++  }
++  //   -- RMonica: indentation level decrease skipped to reduce diff size --
++  }
+ 
+   ///////////////////////////////////////////////////////////////////////////////////////////  
+   // check if we need to shift
+@@ -696,8 +723,8 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw)
+   ///////////////////////////////////////////////////////////////////////////////////////////
+   // Integration check - We do not integrate volume if camera does not move far enought.  
+   {
+-    float rnorm = rodrigues2(current_global_rotation.inverse() * last_known_global_rotation).norm();
+-    float tnorm = (current_global_translation - last_known_global_translation).norm();    
++    float rnorm = rodrigues2(current_global_rotation.inverse() * rmats_[global_time_ - 1]).norm();
++    float tnorm = (current_global_translation - tvecs_[global_time_ - 1]).norm();
+     const float alpha = 1.f;
+     bool integrate = (rnorm + alpha * tnorm)/2 >= integration_metric_threshold_;
+     ///////////////////////////////////////////////////////////////////////////////////////////
+@@ -715,7 +742,8 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw)
+     raycast (intr, device_current_rotation, device_current_translation_local, tsdf_volume_->getTsdfTruncDist (), device_volume_size, tsdf_volume_->data (), getCyclicalBufferStructure (), vmaps_g_prev_[0], nmaps_g_prev_[0]);
+     
+     // POST-PROCESSING: We need to transform the newly raycasted maps into the global space.
+-    Mat33&  rotation_id = device_cast<Mat33> (rmats_[0]); /// Identity Rotation Matrix. Because we never rotate our volume
++    Eigen::Matrix3f ri = Eigen::Matrix3f::Identity();
++    Mat33&  rotation_id = device_cast<Mat33> (/*rmats_[0]*/ri); /// Identity Rotation Matrix. Because we never rotate our volume
+     float3 cube_origin = (getCyclicalBufferStructure ())->origin_metric;
+     MapArr& vmap_temp = vmaps_g_prev_[0];
+     MapArr& nmap_temp = nmaps_g_prev_[0];
+@@ -843,9 +871,9 @@ pcl::gpu::kinfuLS::KinfuTracker::initColorIntegration(int max_weight)
+ 
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ bool 
+-pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth, const View& colors)
++pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth, const View& colors, const THint & hint)
+ { 
+-  bool res = (*this)(depth);
++  bool res = (*this)(depth,hint);
+ 
+   if (res && color_volume_)
+   {

@@ -1,0 +1,267 @@
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
+index 5e9232c..e0bad53 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
+@@ -79,6 +79,7 @@ namespace pcl
+               Eigen::Vector3i cyclical_shifted_origin,Eigen::Vector3i grid_origin) = 0;
+ 
+             virtual void onClearSphere(const Eigen::Vector3f & center,float radius) = 0;
++            virtual void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max) = 0;
+ 
+             virtual void onReset() = 0;
+           };
+@@ -247,6 +248,13 @@ namespace pcl
+               weight_cube_listener_->onClearSphere(center,radius);
+           }
+ 
++          void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max)
++          {
++            world_model_.clearBBox(min,max);
++            if (weight_cube_listener_)
++              weight_cube_listener_->onClearBBox(min,max);
++          }
++
+         private:
+ 
+           /** \brief buffer used to extract XYZ values from GPU */
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
+index 6977cd3..2064150 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
+@@ -426,6 +426,26 @@ pcl::kinfuLS::WorldModel<PointT>::clearSphere(const Eigen::Vector3f & center,flo
+   pcl::removeNaNFromPointCloud (*world_,*world_,*indices);
+ }
+ 
++template <typename PointT>
++void
++pcl::kinfuLS::WorldModel<PointT>::clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max)
++{
++  boost::shared_ptr<std::vector<int> > indices = boost::shared_ptr<std::vector<int> >(new std::vector<int>);
++  const unsigned int size = world_->size();
++
++  for (unsigned int i = 0; i < size; i++)
++  {
++    PointT & pt = (*world_)[i];
++    Eigen::Vector3f ept(pt.x,pt.y,pt.z);
++
++    if ((ept.array() >= min.array()).all() || (ept.array() < max.array()).all())
++      indices->push_back(i);
++  }
++
++  setIndicesAsNans(world_,indices);
++  pcl::removeNaNFromPointCloud (*world_,*world_,*indices);
++}
++
+ #define PCL_INSTANTIATE_WorldModel(T) template class PCL_EXPORTS pcl::kinfuLS::WorldModel<T>;
+ 
+ #endif // PCL_WORLD_MODEL_IMPL_HPP_
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
+index 28cb3c2..81acd4d 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
+@@ -148,6 +148,8 @@ namespace pcl
+ 
+           void clearSphere(const Eigen::Vector3f & center,float radius);
+ 
++          void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max);
++
+           struct THint
+           {
+             enum Type
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h
+index dafc263..3e784b1 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h
+@@ -151,6 +151,9 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+         void
+         clearSphere(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,float radius);
+ 
++        void
++        clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max);
++
+         /** \brief Generates cloud using CPU (downloads volumetric representation to CPU memory)
+           * \param[out] cloud output array for cloud
+           * \param[in] connected26 If false point cloud is extracted using 6 neighbor, otherwise 26.
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
+index 00e7092..d36ef65 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
+@@ -147,6 +147,8 @@ namespace pcl
+ 
+         void clearSphere(const Eigen::Vector3f & center,float radius);
+ 
++        void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max);
++
+         /** \brief Returns the world as a point cloud.
+           */
+         PointCloudPtr getWorld () 
+diff --git a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
+index 1bf7b14..969067b 100644
+--- a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
++++ b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
+@@ -99,7 +99,45 @@ namespace pcl
+             }
+         }
+       }
+-      
++
++      template<typename T>
++      __global__ void
++      clearBBoxKernel(PtrStep<T> volume,int3 shift,float3 m,float3 M)
++      {
++        int x = threadIdx.x + blockIdx.x * blockDim.x;
++        int y = threadIdx.y + blockIdx.y * blockDim.y;
++
++        if (x < VOLUME_X && y < VOLUME_Y)
++        {
++            int ax = x + shift.x;
++            if (ax >= VOLUME_X)
++                ax -= VOLUME_X;
++            int ay = y + shift.y;
++            if (ay >= VOLUME_Y)
++                ay -= VOLUME_Y;
++
++            T *pos = volume.ptr(ay) + ax;
++            int z_step = VOLUME_Y * volume.step / sizeof(*pos);
++
++  #pragma unroll
++            for(int z = 0; z < VOLUME_Z; ++z)
++            {
++              int az = z + shift.z;
++              if (az >= VOLUME_Z)
++                az -= VOLUME_Z;
++
++              float3 pt;
++              pt.x = float(x);
++              pt.y = float(y);
++              pt.z = float(z);
++
++              if ((pt.x >= m.x) && (pt.y >= m.y) && (pt.z >= m.z) &&
++                (pt.x < M.x) && (pt.y < M.y) && (pt.z < M.z))
++                pack_tsdf(0.f, 0, *(pos + (az * z_step)));
++            }
++        }
++      }
++
+       template<typename T>
+       __global__ void
+       clearSliceKernel (PtrStep<T> volume, pcl::gpu::kinfuLS::tsdf_buffer buffer, int3 minBounds, int3 maxBounds)
+@@ -214,6 +252,19 @@ namespace pcl
+         cudaSafeCall ( cudaGetLastError () );
+         cudaSafeCall (cudaDeviceSynchronize ());
+       }
++
++      void
++      clearBBox(PtrStep<short2> volume,const int3& origin,const float3& m,const float3& M)
++      {
++        dim3 block (32, 16);
++        dim3 grid (1, 1, 1);
++        grid.x = divUp (VOLUME_X, block.x);
++        grid.y = divUp (VOLUME_Y, block.y);
++
++        clearBBoxKernel<<<grid, block>>>(volume,origin,m,M);
++        cudaSafeCall ( cudaGetLastError () );
++        cudaSafeCall (cudaDeviceSynchronize ());
++      }
+     }
+   }
+ }
+diff --git a/gpu/kinfu_large_scale/src/internal.h b/gpu/kinfu_large_scale/src/internal.h
+index daa02dd..2778440 100644
+--- a/gpu/kinfu_large_scale/src/internal.h
++++ b/gpu/kinfu_large_scale/src/internal.h
+@@ -211,6 +211,16 @@ namespace pcl
+       void
+       clearSphere(PtrStep<short2> volume,int3 origin,float3 center,float radius);
+ 
++      /**
++       * @brief clear a bounding box in a tsdf volume
++       * @param volume the volume
++       * @param origin the current volume origin (due to volume shifting)
++       * @param min the min value of the bounding box
++       * @param max the max value of the bounding box
++       */
++      void
++      clearBBox(PtrStep<short2> volume,const int3& origin,const float3& min,const float3& max);
++
+       //first version
+       /** \brief Performs Tsfg volume uptation (extra obsolete now)
+         * \param[in] depth_raw Kinect depth image
+diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
+index 9ad25e6..2cb8cbf 100644
+--- a/gpu/kinfu_large_scale/src/kinfu.cpp
++++ b/gpu/kinfu_large_scale/src/kinfu.cpp
+@@ -318,6 +318,41 @@ pcl::gpu::kinfuLS::KinfuTracker::clearSphere(const Eigen::Vector3f & center,floa
+ 
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ void
++pcl::gpu::kinfuLS::KinfuTracker::clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max)
++{
++  Eigen::Vector3i shift;
++  shift.x() = cyclical_.getBuffer()->origin_GRID.x;
++  shift.y() = cyclical_.getBuffer()->origin_GRID.y;
++  shift.z() = cyclical_.getBuffer()->origin_GRID.z;
++
++  Eigen::Vector3f translated_max = max;
++  translated_max.x() -= cyclical_.getBuffer()->origin_metric.x;
++  translated_max.y() -= cyclical_.getBuffer()->origin_metric.y;
++  translated_max.z() -= cyclical_.getBuffer()->origin_metric.z;
++
++  const Eigen::Vector3f expanded_max = max * VOLUME_X / volume_size_;
++  const Eigen::Vector3f expanded_translated_max = translated_max * VOLUME_X / volume_size_;
++
++  Eigen::Vector3f translated_min = min;
++  translated_min.x() -= cyclical_.getBuffer()->origin_metric.x;
++  translated_min.y() -= cyclical_.getBuffer()->origin_metric.y;
++  translated_min.z() -= cyclical_.getBuffer()->origin_metric.z;
++
++  const Eigen::Vector3f expanded_min = min * VOLUME_X / volume_size_;
++  const Eigen::Vector3f expanded_translated_min = translated_min * VOLUME_X / volume_size_;
++
++  // a bounding box must be cleared in the TSDF volume
++  tsdf_volume_->clearBBox(shift,expanded_translated_min,expanded_translated_max);
++
++  // a bounding box must be cleared in the downloaded world model
++  // this also updates the knowledge octree
++  cyclical_.clearBBox(expanded_min,expanded_max);
++
++  just_shifted_ = false;
++}
++
++///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
++void
+ pcl::gpu::kinfuLS::KinfuTracker::allocateBufffers (int rows, int cols)
+ {    
+   depths_curr_.resize (LEVELS);
+diff --git a/gpu/kinfu_large_scale/src/tsdf_volume.cpp b/gpu/kinfu_large_scale/src/tsdf_volume.cpp
+index 3170c8e..a85f014 100644
+--- a/gpu/kinfu_large_scale/src/tsdf_volume.cpp
++++ b/gpu/kinfu_large_scale/src/tsdf_volume.cpp
+@@ -156,6 +156,27 @@ pcl::gpu::kinfuLS::TsdfVolume::clearSphere(const Eigen::Vector3i & tsdf_origin,c
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ void
++pcl::gpu::kinfuLS::TsdfVolume::clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max)
++{
++  int3 o;
++  o.x = origin.x();
++  o.y = origin.y();
++  o.z = origin.z();
++  float3 m;
++  m.x = min.x();
++  m.y = min.y();
++  m.z = min.z();
++  float3 M;
++  M.x = max.x();
++  M.y = max.y();
++  M.z = max.z();
++
++  pcl::device::kinfuLS::clearBBox(volume_,o,m,M);
++}
++
++///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
++
++void
+ pcl::gpu::kinfuLS::TsdfVolume::fetchCloudHost (PointCloud<PointXYZI>& cloud, bool connected26) const
+ {
+   PointCloud<PointXYZ>::Ptr cloud_ptr_ = PointCloud<PointXYZ>::Ptr (new PointCloud<PointXYZ>);

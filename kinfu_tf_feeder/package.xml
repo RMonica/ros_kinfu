@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package>
+  <name>kinfu_tf_feeder</name>
+  <version>0.0.0</version>
+  <description>The kinfu_tf_feeder package</description>
+
+  <maintainer email="rimlab@todo.todo">rimlab</maintainer>
+
+  <license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <build_depend>kinfu_msgs</build_depend>
+  <build_depend>roscpp</build_depend>
+  <build_depend>tf</build_depend>
+  <build_depend>eigen_conversions</build_depend>
+  <build_depend>tf_conversions</build_depend>
+  <run_depend>geometry_msgs</run_depend>
+  <run_depend>kinfu_msgs</run_depend>
+  <run_depend>roscpp</run_depend>
+  <run_depend>tf</run_depend>
+  <run_depend>eigen_conversions</run_depend>
+  <run_depend>tf_conversions</run_depend>
+
+  <export>
+
+  </export>
+</package>

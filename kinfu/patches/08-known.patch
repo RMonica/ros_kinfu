@@ -1,0 +1,403 @@
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
+index e0bad53..4086d94 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
+@@ -75,13 +75,20 @@ namespace pcl
+             // empty virtual constructor to avoid memory leaks
+             virtual ~WeightCubeListener() {}
+ 
+-            virtual void onNewCube(const WeightVectorPtr weights,Eigen::Vector3f cube_size,Eigen::Vector3i nb_voxels,
+-              Eigen::Vector3i cyclical_shifted_origin,Eigen::Vector3i grid_origin) = 0;
++            virtual void onNewCube(const WeightVectorPtr weights,const Eigen::Vector3f& cube_size,const Eigen::Vector3i& nb_voxels,
++              const Eigen::Vector3i& cyclical_shifted_origin,const Eigen::Vector3i& grid_origin) = 0;
+ 
+             virtual void onClearSphere(const Eigen::Vector3f & center,float radius) = 0;
+             virtual void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max) = 0;
+ 
+             virtual void onReset() = 0;
++
++            // this must return:
++            // FALSE if this function is not implemented
++            // TRUE with a NULL weights if the listener is working on the request, the call is repeated next cycle
++            // TRUE with a not-NULL weights: SUCCESS and the shifting can proceed
++            virtual bool retrieveOldCube(WeightVectorPtr& weights,const Eigen::Vector3f& cube_size,
++              const Eigen::Vector3i& nb_voxels,const Eigen::Vector3i& cyclical_shifted_origin,const Eigen::Vector3i& grid_origin) = 0;
+           };
+           
+           /** \brief Constructor for a cubic CyclicalBuffer.
+@@ -99,6 +106,7 @@ namespace pcl
+             buffer_.voxels_size.y = nb_voxels_per_axis; 
+             buffer_.voxels_size.z = nb_voxels_per_axis; 
+             extract_known_points_ = false;
++            old_cube_retrieved_ = true;
+           }
+ 
+ 
+@@ -255,6 +263,8 @@ namespace pcl
+               weight_cube_listener_->onClearBBox(min,max);
+           }
+ 
++          void checkOldCubeRetrieval(const TsdfVolume::Ptr volume);
++
+         private:
+ 
+           /** \brief buffer used to extract XYZ values from GPU */
+@@ -276,6 +286,9 @@ namespace pcl
+           tsdf_buffer buffer_;
+ 
+           bool extract_known_points_;
++
++          bool old_cube_retrieved_;
++          Eigen::Vector3i last_shifting_offset_;
+           
+           /** \brief updates cyclical buffer origins given offsets on X, Y and Z
+             * \param[in] tsdf_volume pointer to the TSDF volume managed by this cyclical buffer
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
+index 2064150..f65c485 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
+@@ -438,7 +438,7 @@ pcl::kinfuLS::WorldModel<PointT>::clearBBox(const Eigen::Vector3f & min,const Ei
+     PointT & pt = (*world_)[i];
+     Eigen::Vector3f ept(pt.x,pt.y,pt.z);
+ 
+-    if ((ept.array() >= min.array()).all() || (ept.array() < max.array()).all())
++    if ((ept.array() >= min.array()).all() && (ept.array() < max.array()).all())
+       indices->push_back(i);
+   }
+ 
+diff --git a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
+index 969067b..95dcbfb 100644
+--- a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
++++ b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
+@@ -369,6 +369,121 @@ namespace pcl
+         }
+       };
+ 
++      template<typename T>
++      __global__ void
++      uploadKnownToTSDFSliceKernel (PtrStep<T> volume, pcl::gpu::kinfuLS::tsdf_buffer buffer, int3 minBounds, int3 maxBounds,
++        PtrStep<short> known_status)
++      {
++        int x = threadIdx.x + blockIdx.x * blockDim.x;
++        int y = threadIdx.y + blockIdx.y * blockDim.y;
++
++        //compute relative indices
++        int idX, idY;
++
++        if(x <= minBounds.x)
++          idX = x + buffer.voxels_size.x;
++        else
++          idX = x;
++
++        if(y <= minBounds.y)
++          idY = y + buffer.voxels_size.y;
++        else
++          idY = y;
++
++
++        if ( x < buffer.voxels_size.x && y < buffer.voxels_size.y)
++        {
++            if( (idX >= minBounds.x && idX <= maxBounds.x) || (idY >= minBounds.y && idY <= maxBounds.y) )
++            {
++                // BLACK ZONE => clear on all Z values
++
++                ///Pointer to the first x,y,0
++                T *pos = volume.ptr(y) + x;
++
++                ///Get the step on Z
++                int z_step = buffer.voxels_size.y * volume.step / sizeof(*pos);
++
++                ///Get the size of the whole TSDF memory
++                int size = buffer.tsdf_memory_end - buffer.tsdf_memory_start;
++
++                short * ks = known_status.ptr(y) + x;
++                short * max_ks = known_status.ptr(0) + buffer.voxels_size.x*buffer.voxels_size.y*buffer.voxels_size.z;
++
++                ///Move along z axis
++      #pragma unroll
++                for(int z = 0; z < buffer.voxels_size.z; ++z, pos+=z_step, ks+=z_step)
++                {
++                  ///If we went outside of the memory, make sure we go back to the begining of it
++                  if(pos > buffer.tsdf_memory_end)
++                    pos = pos - size;
++
++                  if (ks >= max_ks)
++                    ks -= size;
++
++                  if (pos >= buffer.tsdf_memory_start && pos <= buffer.tsdf_memory_end) { // quickfix for http://dev.pointclouds.org/issues/894
++                    float tsdf;
++                    int w;
++                    unpack_tsdf(*pos, tsdf, w);
++                    pack_tsdf (tsdf, min(*ks + w,(Tsdf::MAX_WEIGHT)), *pos);
++                  }
++                }
++            }
++            else /* if( idX > maxBounds.x && idY > maxBounds.y)*/
++            {
++
++                ///RED ZONE  => clear only appropriate Z
++
++                ///Pointer to the first x,y,0
++                T *pos = volume.ptr(y) + x;
++
++                ///Get the step on Z
++                int z_step = buffer.voxels_size.y * volume.step / sizeof(*pos);
++
++                ///Get the size of the whole TSDF memory
++                int size = buffer.tsdf_memory_end - buffer.tsdf_memory_start;
++
++                short * ks = known_status.ptr(y) + x;
++                short * max_ks = known_status.ptr(0) + buffer.voxels_size.x*buffer.voxels_size.y*buffer.voxels_size.z;
++
++                ///Move pointer to the Z origin
++                pos+= minBounds.z * z_step;
++                ks+= minBounds.z * z_step;
++
++                ///If the Z offset is negative, we move the pointer back
++                if(maxBounds.z < 0) {
++                  pos += maxBounds.z * z_step;
++                  ks += minBounds.z * z_step;
++                }
++
++                ///We make sure that we are not already before the start of the memory
++                if(pos < buffer.tsdf_memory_start) {
++                    pos = pos + size;
++                    ks += size;
++                }
++
++                int nbSteps = abs(maxBounds.z);
++
++            #pragma unroll
++                for(int z = 0; z < nbSteps; ++z, pos+=z_step, ks+=z_step)
++                {
++                  ///If we went outside of the memory, make sure we go back to the begining of it
++                  if(pos > buffer.tsdf_memory_end)
++                    pos = pos - size;
++
++                  if (ks >= max_ks)
++                    ks -= size;
++
++                  if (pos >= buffer.tsdf_memory_start && pos <= buffer.tsdf_memory_end) {// quickfix for http://dev.pointclouds.org/issues/894
++                    float tsdf;
++                    int w;
++                    unpack_tsdf(*pos,tsdf,w);
++                    pack_tsdf (tsdf, min(*ks + w,(Tsdf::MAX_WEIGHT)), *pos);
++                  }
++                }
++            } //else /* if( idX > maxBounds.x && idY > maxBounds.y)*/
++        } // if ( x < VOLUME_X && y < VOLUME_Y)
++      } // clearSliceKernel
++
+       __global__ void
+       integrateTsdfKernel (const Tsdf tsdf) {
+         tsdf ();
+@@ -800,6 +915,62 @@ namespace pcl
+         cudaSafeCall ( cudaGetLastError () );
+         cudaSafeCall (cudaDeviceSynchronize ());        
+       }
++
++    /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
++      void
++      uploadKnownToTSDFSlice (PtrStep<short2> volume, pcl::gpu::kinfuLS::tsdf_buffer* buffer, int shiftX, int shiftY, int shiftZ,
++        PtrStep<short> known_status)
++      {
++        int newX = buffer->origin_GRID.x + shiftX;
++        int newY = buffer->origin_GRID.y + shiftY;
++
++        int3 minBounds, maxBounds;
++
++        //X
++        if(newX >= 0)
++        {
++        minBounds.x = buffer->origin_GRID.x;
++        maxBounds.x = newX;
++        }
++        else
++        {
++        minBounds.x = newX + buffer->voxels_size.x;
++        maxBounds.x = buffer->origin_GRID.x + buffer->voxels_size.x;
++        }
++
++        if(minBounds.x > maxBounds.x)
++        std::swap(minBounds.x, maxBounds.x);
++
++
++        //Y
++        if(newY >= 0)
++        {
++        minBounds.y = buffer->origin_GRID.y;
++        maxBounds.y = newY;
++        }
++        else
++        {
++        minBounds.y = newY + buffer->voxels_size.y;
++        maxBounds.y = buffer->origin_GRID.y + buffer->voxels_size.y;
++        }
++
++        if(minBounds.y > maxBounds.y)
++        std::swap(minBounds.y, maxBounds.y);
++
++        //Z
++        minBounds.z = buffer->origin_GRID.z;
++        maxBounds.z = shiftZ;
++
++        // call kernel
++        dim3 block (32, 16);
++        dim3 grid (1, 1, 1);
++        grid.x = divUp (buffer->voxels_size.x, block.x);
++        grid.y = divUp (buffer->voxels_size.y, block.y);
++
++        uploadKnownToTSDFSliceKernel<<<grid, block>>>(volume, *buffer, minBounds, maxBounds, known_status);
++        cudaSafeCall ( cudaGetLastError () );
++        cudaSafeCall (cudaDeviceSynchronize ());
++      }
+     }
+   }
+ }
+diff --git a/gpu/kinfu_large_scale/src/cyclical_buffer.cpp b/gpu/kinfu_large_scale/src/cyclical_buffer.cpp
+index ab542f3..0717272 100644
+--- a/gpu/kinfu_large_scale/src/cyclical_buffer.cpp
++++ b/gpu/kinfu_large_scale/src/cyclical_buffer.cpp
+@@ -60,6 +60,8 @@ pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume,
+   center_cube.y = buffer_.origin_metric.y + buffer_.volume_size.y/2.0f;
+   center_cube.z = buffer_.origin_metric.z + buffer_.volume_size.z/2.0f;
+ 
++  checkOldCubeRetrieval(volume);
++
+   if (pcl::euclideanDistance (targetPoint, center_cube) > distance_threshold_)
+     result = true;
+ 
+@@ -73,6 +75,41 @@ pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume,
+   return (result);
+ }
+ 
++void pcl::gpu::kinfuLS::CyclicalBuffer::checkOldCubeRetrieval(const TsdfVolume::Ptr volume)
++{
++  if (!old_cube_retrieved_) {
++    if (!weight_cube_listener_) {
++      old_cube_retrieved_ = true;
++      return;
++    }
++
++    WeightCubeListener::WeightVectorPtr old_weights;
++    if (extract_known_points_ && weight_cube_listener_) {
++      Eigen::Vector3i nb_voxels(buffer_.voxels_size.x,buffer_.voxels_size.y,buffer_.voxels_size.z);
++      Eigen::Vector3i cyclical_shifted_origin(buffer_.origin_GRID.x,buffer_.origin_GRID.y,buffer_.origin_GRID.z);
++      Eigen::Vector3i grid_origin(buffer_.origin_GRID_global.x,buffer_.origin_GRID_global.y,buffer_.origin_GRID_global.z);
++      Eigen::Vector3f cube_size(buffer_.volume_size.x,buffer_.volume_size.y,buffer_.volume_size.z);
++      if (!weight_cube_listener_->retrieveOldCube(old_weights,cube_size,nb_voxels,cyclical_shifted_origin,grid_origin)) {
++        old_cube_retrieved_ = true; // feature not implemented
++        PCL_INFO ("known: feature not implemented by listener.\n");
++      }
++    }
++
++    // clear buffer slice and update the world model
++    if (old_weights && !old_cube_retrieved_) {
++      DeviceArray2D<short> device_weights;
++      device_weights.create(buffer_.voxels_size.y * buffer_.voxels_size.z, buffer_.voxels_size.x);
++      device_weights.upload(*old_weights,buffer_.voxels_size.x);
++
++      PCL_INFO ("known: uploading weights...\n");
++      pcl::device::kinfuLS::uploadKnownToTSDFSlice (volume->data (), &buffer_,
++        last_shifting_offset_.x(), last_shifting_offset_.y(), last_shifting_offset_.z(), device_weights);
++      PCL_INFO ("known: upload complete.\n");
++      old_cube_retrieved_ = true;
++    }
++  }
++}
++
+ 
+ void
+ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, const pcl::PointXYZ &target_point, const bool last_shift)
+@@ -80,6 +117,7 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
+   // compute new origin and offsets
+   int offset_x, offset_y, offset_z;
+   computeAndSetNewCubeMetricOrigin (target_point, offset_x, offset_y, offset_z);
++  last_shifting_offset_ = Eigen::Vector3i(offset_x,offset_y,offset_z);
+ 
+   // extract current slice from the TSDF volume (coordinates are in indices! (see fetchSliceAsCloud() )
+   DeviceArray<PointXYZ> points;
+@@ -123,22 +161,16 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
+   current_slice->height = 1;
+ 
+   // save the known points
++  Eigen::Vector3i onNewCube_cyclical_shifted_origin(buffer_.origin_GRID.x,buffer_.origin_GRID.y,buffer_.origin_GRID.z);
++  Eigen::Vector3i onNewCube_grid_origin(buffer_.origin_GRID_global.x,buffer_.origin_GRID_global.y,buffer_.origin_GRID_global.z);
++  WeightCubeListener::WeightVectorPtr onNewCube_current_weights_ptr;
+   if (extract_known_points_)
+   {
+     // download weights
+-    WeightCubeListener::WeightVectorPtr current_weights_ptr(new WeightCubeListener::WeightVector);
+-    volume->downloadWeights(*current_weights_ptr);
+-
+-    if (weight_cube_listener_)
+-      {
+-      PCL_INFO("shift: calling weight listener...\n");
+-      Eigen::Vector3i nb_voxels(buffer_.voxels_size.x,buffer_.voxels_size.y,buffer_.voxels_size.z);
+-      Eigen::Vector3i cyclical_shifted_origin(buffer_.origin_GRID.x,buffer_.origin_GRID.y,buffer_.origin_GRID.z);
+-      Eigen::Vector3i grid_origin(buffer_.origin_GRID_global.x,buffer_.origin_GRID_global.y,buffer_.origin_GRID_global.z);
+-      Eigen::Vector3f cube_size(buffer_.volume_size.x,buffer_.volume_size.y,buffer_.volume_size.z);
+-      weight_cube_listener_->onNewCube(current_weights_ptr,cube_size,nb_voxels,cyclical_shifted_origin,grid_origin);
+-      PCL_INFO("shift: done.\n");
+-      }
++    PCL_INFO("shift: downloading weights...\n");
++    onNewCube_current_weights_ptr = WeightCubeListener::WeightVectorPtr(new WeightCubeListener::WeightVector);
++    volume->downloadWeights(*onNewCube_current_weights_ptr);
++    PCL_INFO("shift: weights downloaded.\n");
+   }
+ 
+   // transform the slice from local to global coordinates
+@@ -186,6 +218,21 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
+   if (previously_existing_slice->points.size () != 0 ) {
+     volume->pushSlice(previously_existing_slice, getBuffer () );
+   }
++
++  if (extract_known_points_) {
++    old_cube_retrieved_ = false;
++    checkOldCubeRetrieval(volume);
++
++    if (weight_cube_listener_)
++      {
++      PCL_INFO("shift: calling weight listener...\n");
++      Eigen::Vector3i nb_voxels(buffer_.voxels_size.x,buffer_.voxels_size.y,buffer_.voxels_size.z);
++      Eigen::Vector3f cube_size(buffer_.volume_size.x,buffer_.volume_size.y,buffer_.volume_size.z);
++      weight_cube_listener_->onNewCube(onNewCube_current_weights_ptr,cube_size,
++        nb_voxels,onNewCube_cyclical_shifted_origin,onNewCube_grid_origin);
++      PCL_INFO("shift: done.\n");
++      }
++  }
+ }
+ 
+ void
+diff --git a/gpu/kinfu_large_scale/src/internal.h b/gpu/kinfu_large_scale/src/internal.h
+index 2778440..bcc1e8f 100644
+--- a/gpu/kinfu_large_scale/src/internal.h
++++ b/gpu/kinfu_large_scale/src/internal.h
+@@ -260,6 +260,10 @@ namespace pcl
+         */
+       PCL_EXPORTS void 
+       clearTSDFSlice (PtrStep<short2> volume, pcl::gpu::kinfuLS::tsdf_buffer* buffer, int shiftX, int shiftY, int shiftZ);
++
++      PCL_EXPORTS void
++      uploadKnownToTSDFSlice (PtrStep<short2> volume, pcl::gpu::kinfuLS::tsdf_buffer* buffer, int shiftX, int shiftY, int shiftZ,
++        PtrStep<short> known_status);
+       
+       /** \brief Initialzied color volume
+         * \param[out] color_volume color volume for initialization
+diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
+index efe4b5a..5a09b16 100644
+--- a/gpu/kinfu_large_scale/src/kinfu.cpp
++++ b/gpu/kinfu_large_scale/src/kinfu.cpp
+@@ -696,6 +696,12 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
+     rmats_[0] = hint.transform.linear();
+     tvecs_[0] = hint.transform.translation();
+   }
++
++  if (has_hint && lost_)
++  {
++    lost_ = false;
++    PCL_INFO("KinFu attempting to recover from hint.");
++  }
+   
+   // process the incoming raw depth map
+   prepareMaps (depth_raw, intr);

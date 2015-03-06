@@ -87,9 +87,10 @@ Then, you can compile the node using catkin_make (or, even better, catkin_make_i
   /home/my_home/pcl/source/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl
   /home/my_home/pcl/source/gpu/kinfu_large_scale/src
 
-to directory
+to directories
 
   /home/my_home/pcl/install/include/pcl-M.m/pcl/gpu/kinfu_large_scale
+  /home/my_home/pcl/install/include/pcl-M.m/pcl/gpu/kinfu_large_scale/impl
 
 Copy them one by one and attempt to compile again until the compilation succeeds.
 

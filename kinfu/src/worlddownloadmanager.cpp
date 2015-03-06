@@ -622,10 +622,19 @@ bool WorldDownloadManager::marchingCubes(pcl::PointCloud<pcl::PointXYZI>::Ptr cl
     wm.addSlice (cloud);
 
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> clouds;
+
+    // CHANGE PCL 1.8
     std::vector<Eigen::Vector3f> transforms;
+    std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> > transforms_alloc;
 
     //Get world as a vector of cubes
-    wm.getWorldAsCubes (pcl::device::kinfuLS::VOLUME_X, clouds, transforms, 0.025); // 2.5% overlapp (12 cells with a 512-wide cube)
+    // CHANGE PCL 1.8
+    // wm.getWorldAsCubes (pcl::device::kinfuLS::VOLUME_X, clouds, transforms, 0.025); // 2.5% overlapp (12 cells with a 512-wide cube)
+    wm.getWorldAsCubes (pcl::device::kinfuLS::VOLUME_X, clouds, transforms_alloc, 0.025); // 2.5% overlapp (12 cells with a 512-wide cube)
+    // CHANGE PCL 1.8 TODO: More elegant way of copying?
+    for(std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> >::iterator it = transforms_alloc.begin(); it != transforms_alloc.end(); ++it) {
+        transforms.push_back(*it);
+    }
 
     //Creating the standalone marching cubes instance
     float volume_size = pcl::device::kinfuLS::VOLUME_SIZE;

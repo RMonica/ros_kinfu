@@ -1,0 +1,206 @@
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h
+index 5208662..b7ba4c0 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h
+@@ -87,6 +87,15 @@ namespace pcl
+         /** \brief Sets camera intrinsics */ 
+         void
+         setIntrinsics(float fx = 525.f, float fy = 525.f, float cx = -1, float cy = -1);
++
++        /** \brief Sets bounding box */
++        void
++        setBoundingBox(const Eigen::Vector3f & bbox_min,const Eigen::Vector3f & bbox_max)
++          {bbox_min_ = bbox_min; bbox_max_= bbox_max; has_bbox_ = true; }
++
++        /** \brief clear bounding box */
++        void
++        clearBoundingBox() {has_bbox_ = false; }
+         
+         /** \brief Runs raycasting algorithm from given camera pose. It writes results to internal fiels.
+           * \param[in] volume tsdf volume container
+@@ -155,6 +164,11 @@ namespace pcl
+         /** \brief Last passed volume size */
+         Eigen::Vector3f volume_size_;
+ 
++        /** \brief true if voxels outside a bounding box must be ignored (i. e. set to empty) */
++        bool has_bbox_;
++        Eigen::Vector3f bbox_min_;
++        Eigen::Vector3f bbox_max_;
++
+ public:
+ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+ 
+diff --git a/gpu/kinfu_large_scale/src/cuda/ray_caster.cu b/gpu/kinfu_large_scale/src/cuda/ray_caster.cu
+index 3ba07dc..7f9bbcc 100644
+--- a/gpu/kinfu_large_scale/src/cuda/ray_caster.cu
++++ b/gpu/kinfu_large_scale/src/cuda/ray_caster.cu
+@@ -64,7 +64,7 @@ namespace pcl
+         return fmin (fmin (txmax, tymax), tzmax);
+       }
+ 
+-      template <bool SEARCH_UNKNOWN>
++      template <bool SEARCH_UNKNOWN,bool SEARCH_BBOX>
+       struct RayCaster
+       {
+         enum { CTA_SIZE_X = 32, CTA_SIZE_Y = 8 };
+@@ -78,6 +78,8 @@ namespace pcl
+         float3 cell_size;
+         int cols, rows;
+ 
++        float3 bbox_min,bbox_max; // if SEARCH_BBOX
++
+         PtrStep<short2> volume;
+ 
+         Intr intr;
+@@ -102,6 +104,13 @@ namespace pcl
+           return (g.x >= 0 && g.y >= 0 && g.z >= 0 && g.x < VOLUME_X && g.y < VOLUME_Y && g.z < VOLUME_Z);
+         }
+ 
++        __device__ __forceinline__ bool
++        checkCoords (const float3 & g) const
++        {
++          return !SEARCH_BBOX || (g.x >= bbox_min.x && g.y >= bbox_min.y && g.z >= bbox_min.z &&
++            g.x < bbox_max.x && g.y < bbox_max.y && g.z < bbox_max.z);
++        }
++
+         __device__ __forceinline__ float
+         readTsdf (int x, int y, int z, pcl::gpu::kinfuLS::tsdf_buffer buffer) const
+         {
+@@ -253,7 +262,11 @@ namespace pcl
+           {
+             float tsdf_prev = tsdf;
+ 
+-            int3 g = getVoxel (  ray_start + ray_dir * (time_curr + time_step)  );
++            float3 world_pt = ray_start + ray_dir * (time_curr + time_step);
++            if (!checkCoords(world_pt))
++              continue;
++
++            int3 g = getVoxel (world_pt);
+             if (!checkInds (g))
+               break;
+ 
+@@ -346,20 +359,21 @@ namespace pcl
+         }
+       };
+ 
+-      template <bool SEARCH_UNKNOWN>
++      template <bool SEARCH_UNKNOWN,bool SEARCH_BBOX>
+       __global__ void
+-      rayCastKernel (const RayCaster<SEARCH_UNKNOWN> rc, pcl::gpu::kinfuLS::tsdf_buffer buffer) {
++      rayCastKernel (const RayCaster<SEARCH_UNKNOWN,SEARCH_BBOX> rc, pcl::gpu::kinfuLS::tsdf_buffer buffer) {
+         rc (buffer);
+       }
+ 
+       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+-      template <bool SEARCH_UNKNOWN>
++      template <bool SEARCH_UNKNOWN,bool SEARCH_BBOX>
+       void
+       templatedRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                             float tranc_dist, const float3& volume_size,
+-                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap)
++                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap,
++                            const float3 * bbox_min,const float3 * bbox_max)
+       {
+-        RayCaster<SEARCH_UNKNOWN> rc;
++        RayCaster<SEARCH_UNKNOWN,SEARCH_BBOX> rc;
+ 
+         rc.Rcurr = Rcurr;
+         rc.tcurr = tcurr;
+@@ -384,10 +398,16 @@ namespace pcl
+         else
+           rc.umap = nmap;
+ 
+-        dim3 block (RayCaster<SEARCH_UNKNOWN>::CTA_SIZE_X, RayCaster<SEARCH_UNKNOWN>::CTA_SIZE_Y);
++        if (SEARCH_BBOX)
++        {
++          rc.bbox_max = *bbox_max;
++          rc.bbox_min = *bbox_min;
++        }
++
++        dim3 block (RayCaster<SEARCH_UNKNOWN,SEARCH_BBOX>::CTA_SIZE_X, RayCaster<SEARCH_UNKNOWN,SEARCH_BBOX>::CTA_SIZE_Y);
+         dim3 grid (divUp (rc.cols, block.x), divUp (rc.rows, block.y));
+ 
+-        rayCastKernel<SEARCH_UNKNOWN><<<grid, block>>>(rc, *buffer);
++        rayCastKernel<SEARCH_UNKNOWN,SEARCH_BBOX><<<grid, block>>>(rc, *buffer);
+         cudaSafeCall (cudaGetLastError ());
+         cudaSafeCall(cudaDeviceSynchronize());
+       }
+@@ -397,7 +417,7 @@ namespace pcl
+                             float tranc_dist, const float3& volume_size,
+                             const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap)
+       {
+-        templatedRaycast<false>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,nmap);
++        templatedRaycast<false,false>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,nmap,NULL,NULL);
+       }
+ 
+       void
+@@ -405,7 +425,16 @@ namespace pcl
+                             float tranc_dist, const float3& volume_size,
+                             const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap)
+       {
+-        templatedRaycast<true>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,umap);
++        templatedRaycast<true,false>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,umap,NULL,NULL);
++      }
++
++      void
++      unkRaycastBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
++                            float tranc_dist, const float3& volume_size,
++                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap,
++                            const float3 & bbox_min,const float3 & bbox_max)
++      {
++        templatedRaycast<true,true>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,umap,&bbox_min,&bbox_max);
+       }
+     }
+   }
+diff --git a/gpu/kinfu_large_scale/src/internal.h b/gpu/kinfu_large_scale/src/internal.h
+index 1fa42b9..7d2ba6b 100644
+--- a/gpu/kinfu_large_scale/src/internal.h
++++ b/gpu/kinfu_large_scale/src/internal.h
+@@ -318,6 +318,12 @@ namespace pcl
+       unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, const float3& volume_size,
+               const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap);
+ 
++
++      void
++      unkRaycastBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, const float3& volume_size,
++              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap,
++              const float3 & bbox_min,const float3 & bbox_max);
++
+       /** \brief Renders 3D image of the scene
+         * \param[in] vmap vertex map
+         * \param[in] nmap normals map
+diff --git a/gpu/kinfu_large_scale/src/raycaster.cpp b/gpu/kinfu_large_scale/src/raycaster.cpp
+index 069cb14..812857c 100644
+--- a/gpu/kinfu_large_scale/src/raycaster.cpp
++++ b/gpu/kinfu_large_scale/src/raycaster.cpp
+@@ -98,12 +98,28 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
+   device_t.x -= buffer->origin_metric.x;
+   device_t.y -= buffer->origin_metric.y;
+   device_t.z -= buffer->origin_metric.z;
+-  
++
+   float tranc_dist = volume.getTsdfTruncDist();  
+   if (!with_known)
+     pcl::device::kinfuLS::raycast (intr, device_R, device_t, tranc_dist, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, normal_map_);
+-  else
++  else if (with_known && !has_bbox_)
+     pcl::device::kinfuLS::unkRaycast (intr, device_R, device_t, tranc_dist, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, known_map_);
++  else if (with_known && has_bbox_)
++  {
++    float3 device_bbox_min = pcl::device::kinfuLS::device_cast<float3>(bbox_min_);
++    device_bbox_min.x -= buffer->origin_metric.x;
++    device_bbox_min.y -= buffer->origin_metric.y;
++    device_bbox_min.z -= buffer->origin_metric.z;
++
++    float3 device_bbox_max = pcl::device::kinfuLS::device_cast<float3>(bbox_max_);
++    device_bbox_max.x -= buffer->origin_metric.x;
++    device_bbox_max.y -= buffer->origin_metric.y;
++    device_bbox_max.z -= buffer->origin_metric.z;
++
++    pcl::device::kinfuLS::unkRaycastBBox(intr, device_R, device_t, tranc_dist,
++      pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
++      vertex_map_, known_map_, device_bbox_min, device_bbox_max);
++  }
+ }
+ 
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

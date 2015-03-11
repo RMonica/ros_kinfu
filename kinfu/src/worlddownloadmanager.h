@@ -35,6 +35,7 @@
 #include <iostream>
 #include <vector>
 #include <list>
+#include <stdint.h>
 
 // Boost
 #include <boost/filesystem.hpp>
@@ -47,9 +48,11 @@
 
 // PCL/GPU
 #include <pcl/gpu/kinfu_large_scale/kinfu.h>
+#include <pcl/gpu/kinfu_large_scale/raycaster.h>
 
 // ROS
 #include <ros/ros.h>
+#include <sensor_msgs/Image.h>
 
 // Eigen
 #include <Eigen/Dense>
@@ -61,6 +64,7 @@
 // ROS custom messages
 #include <kinfu_msgs/KinfuTsdfResponse.h>
 #include <kinfu_msgs/KinfuTsdfRequest.h>
+#include <kinfu_msgs/KinfuCameraIntrinsics.h>
 
 class WorldDownloadManager
 {
@@ -68,12 +72,14 @@ class WorldDownloadManager
   typedef boost::shared_ptr<ros::Publisher> PublisherPtr;
   typedef pcl::gpu::kinfuLS::KinfuTracker KinfuTracker;
   typedef unsigned int uint;
+  typedef uint64_t uint64;
   typedef pcl::PolygonMesh Mesh;
   typedef pcl::PointCloud<pcl::PointXYZI> TsdfCloud;
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
   typedef std::vector<kinfu_msgs::KinfuMeshTriangle> Triangles;
   typedef boost::shared_ptr<Triangles> TrianglesPtr;
   typedef boost::shared_ptr<const Triangles> TrianglesConstPtr;
+  typedef pcl::gpu::kinfuLS::RayCaster RayCaster;
 
   WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex &shared_mutex,boost::condition_variable & cond);
 
@@ -119,6 +125,15 @@ class WorldDownloadManager
 
   void extractKnownWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
 
+  void extractViewWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
+
+  void extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
+
+  void extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
+  void extractVoxelCountGenericWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
+
+  void extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
+
   bool marchingCubes(
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloud,std::vector<Mesh::Ptr> & output_meshes) const;
 
@@ -126,6 +141,11 @@ class WorldDownloadManager
   bool lockKinfu();
 
   void unlockKinfu();
+
+  bool shiftNear(const Eigen::Affine3f & pose, float distance); // false on error
+
+  void initRaycaster(bool has_intrinsics,const kinfu_msgs::KinfuCameraIntrinsics & intr,
+    bool has_bounding_box_view,const kinfu_msgs::KinfuCloudPoint & bbox_min,const kinfu_msgs::KinfuCloudPoint & bbox_max);
 
   static void cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
     const kinfu_msgs::KinfuCloudPoint & max,PointCloud::ConstPtr cloud,
@@ -137,7 +157,9 @@ class WorldDownloadManager
   // (the main reason being that ROS uses std::vector
   // OR ros::array, "if available")
   template<typename T1,typename T2>
-    static Eigen::Affine3f toEigenAffine(T1 linear,T2 translation);
+    static Eigen::Affine3f toEigenAffine(const T1 & linear,const T2 & translation);
+
+  static Eigen::Affine3f toEigenAffine(const kinfu_msgs::KinfuPose & pose);
 
   ros::Subscriber m_subReq;
   std::string m_req_topic_name;
@@ -146,6 +168,9 @@ class WorldDownloadManager
   std::string m_resp_topic_name;
 
   ros::NodeHandle &m_nh;
+
+  RayCaster::Ptr m_raycaster;
+  KinfuTracker::View m_view_device;
 
   boost::mutex &m_shared_mutex;
   boost::condition_variable & m_shared_cond;

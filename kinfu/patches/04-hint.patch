@@ -1,8 +1,8 @@
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-index 23f4b40..f94bc22 100644
+index 52a6b83..24ac485 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-@@ -159,11 +159,15 @@ namespace pcl
+@@ -156,11 +156,15 @@ namespace pcl
                MAX_HINT_TYPE
              };
  
@@ -21,10 +21,10 @@ index 23f4b40..f94bc22 100644
              EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
            };
 diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
-index 9aff182..b437c76 100644
+index 5f60500..2bf06b7 100644
 --- a/gpu/kinfu_large_scale/src/kinfu.cpp
 +++ b/gpu/kinfu_large_scale/src/kinfu.cpp
-@@ -610,6 +610,7 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
+@@ -613,6 +613,7 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
  
    const bool has_hint = (hint.type != THint::HINT_TYPE_NONE);
    const bool has_forced_hint = has_hint && (hint.type == THint::HINT_TYPE_FORCED);
@@ -32,7 +32,7 @@ index 9aff182..b437c76 100644
  
    if (has_hint && global_time_ == 0)
    {
-@@ -736,7 +737,7 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
+@@ -745,7 +746,7 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
      bool integrate = (rnorm + alpha * tnorm)/2 >= integration_metric_threshold_;
      ///////////////////////////////////////////////////////////////////////////////////////////
      // Volume integration  

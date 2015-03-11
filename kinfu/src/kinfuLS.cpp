@@ -66,7 +66,6 @@
 
 // PCL/GPU
 #include <pcl/gpu/kinfu_large_scale/kinfu.h>
-#include <pcl/gpu/kinfu_large_scale/raycaster.h>
 #include <pcl/gpu/kinfu_large_scale/marching_cubes.h>
 #include <pcl/gpu/containers/initialization.h>
 #include <pcl/gpu/kinfu_large_scale/screenshot_manager.h>
@@ -100,7 +99,6 @@
 typedef pcl::ScopeTime ScopeTimeT;
 
 using pcl::gpu::kinfuLS::KinfuTracker;
-using pcl::gpu::kinfuLS::RayCaster;
 using pcl::gpu::PtrStepSz;
 using sensor_msgs::CameraInfo;
 using sensor_msgs::Image;
@@ -119,7 +117,7 @@ struct SampledScopeTime : public pcl::StopWatch
     time_ms_ += getTime();
     if (i_ % EACH == 0 && i_)
     {
-      cout << "Average frame time = " << time_ms_ / EACH << "ms ( " << 1000.f * EACH / time_ms_ << "fps)" << endl;
+      ROS_INFO("Avg frame time = %.2f ms (%.2f fps)",float(time_ms_) / EACH,float(1000.f * EACH / time_ms_));
       time_ms_ = 0;
     }
     ++i_;
@@ -212,8 +210,6 @@ struct ImagePublisher
     m_view_publisher.publish(m_msg);
   }
 
-  void setRayCaster(RayCaster::Ptr raycaster) {raycaster_ptr_ = raycaster; }
-
   private:
   bool paint_image_;
   bool accumulate_views_;
@@ -221,8 +217,6 @@ struct ImagePublisher
   KinfuTracker::View view_device_;
   KinfuTracker::View colors_device_;
   std::vector<pcl::gpu::kinfuLS::PixelRGB> view_host_;
-
-  RayCaster::Ptr raycaster_ptr_;
 
   std::string m_current_view_topic;
 
@@ -468,7 +462,6 @@ struct KinFuLSApp
 
     //Init KinFuLSApp
     tsdf_cloud_ptr_ = pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
-    m_image_publisher.setRayCaster(RayCaster::Ptr(new RayCaster(kinfu_->rows(), kinfu_->cols())));
 
     frame_counter_ = 0;
     enable_texture_extraction_ = false;
@@ -566,6 +559,18 @@ struct KinFuLSApp
 
       // Computational heavy tasks follow. Unlock the mutex, so it can run along the main thread.
       main_lock.unlock();
+
+      if ((clear_sphere || clear_bbox || hasrequests) && !kinfu_->isShiftComplete())
+      {
+        ROS_INFO("kinfu: shift incomplete but requests pending, waiting for it...");
+        ros::Rate rate(10);
+        while (!kinfu_->isShiftComplete())
+        {
+          kinfu_->updateShift();
+          rate.sleep();
+        }
+        ROS_INFO("kinfu: shift is now complete, can continue.");
+      }
 
       if (clear_sphere)
       {

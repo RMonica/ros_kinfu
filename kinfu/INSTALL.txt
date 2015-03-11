@@ -67,7 +67,7 @@ but you have to enable the "cuda" and "gpu" targets in the CMakeFiles. In additi
  5) Exit ccmake (q).
  6) Issue the command:
     cmake ..
- 7) At this point, a list of targets to be built will be shown. Check the presence among them of something like "cuda", "kinfu" and "kinfu_large_scale". If they are not here (or are in the "will not build" list) even if you did enable them, you have problems with the dependencies. Solve them and restart from step 1. Yes, you have to DELETE THE BUILD DIRECTORY and start over. Simply re-running cmake may not work.
+ 7) At this point, a list of targets to be built will be shown. Check the presence among them of something like "kinfu" and "kinfu_large_scale". If they are not here (or are in the "will not build" list) even if you did enable them, you have problems with the dependencies. Solve them and restart from step 1. Yes, you have to DELETE THE BUILD DIRECTORY and start over. Simply re-running cmake may not work.
  8) Compile with the command:
     make
     and solve all the problems that may arise. Errors in CUDA files usually mean that your CUDA installation is not really installed or detected.
@@ -84,17 +84,18 @@ where "M.m" stands for the major and minor version of the library (e.g. "1.7" fo
 Then, you can compile the node using catkin_make (or, even better, catkin_make_isolated). If everything went right at this point, the compilation should fail, stating that it could not find some header files. This is beacuse some of the required .h and .hpp headers are not installed by the PCL installation script, from directories
   
   /home/my_home/pcl/source/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale
-  /home/my_home/pcl/source/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl
   /home/my_home/pcl/source/gpu/kinfu_large_scale/src
+  /home/my_home/pcl/source/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl
 
-to directory
+to directories
 
   /home/my_home/pcl/install/include/pcl-M.m/pcl/gpu/kinfu_large_scale
+  /home/my_home/pcl/install/include/pcl-M.m/pcl/gpu/kinfu_large_scale/impl
 
 Copy them one by one and attempt to compile again until the compilation succeeds.
 
 During the process, some conflicts in function prototypes may happen. This is not usually caused by a corrupt PCL installation, but by some ROS-PCL headers that have been used in absence of the correct one in your installation directory.
 
-2014 11 26
+2015 03 11
 
 Riccardo Monica

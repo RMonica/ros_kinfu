@@ -25,7 +25,7 @@ index 5e9232c..e0bad53 100644
  
            /** \brief buffer used to extract XYZ values from GPU */
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
-index 6977cd3..2064150 100644
+index a7c1a6f..0057e47 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
 @@ -426,6 +426,26 @@ pcl::kinfuLS::WorldModel<PointT>::clearSphere(const Eigen::Vector3f & center,flo
@@ -56,7 +56,7 @@ index 6977cd3..2064150 100644
  
  #endif // PCL_WORLD_MODEL_IMPL_HPP_
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-index 28cb3c2..81acd4d 100644
+index 666726a..ed1582a 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
 @@ -148,6 +148,8 @@ namespace pcl
@@ -83,7 +83,7 @@ index dafc263..3e784b1 100644
            * \param[out] cloud output array for cloud
            * \param[in] connected26 If false point cloud is extracted using 6 neighbor, otherwise 26.
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
-index 00e7092..d36ef65 100644
+index 959c5a1..27c873c 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
 @@ -147,6 +147,8 @@ namespace pcl
@@ -96,7 +96,7 @@ index 00e7092..d36ef65 100644
            */
          PointCloudPtr getWorld () 
 diff --git a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
-index 1bf7b14..969067b 100644
+index 739f66c..1828378 100644
 --- a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
 +++ b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
 @@ -99,7 +99,45 @@ namespace pcl
@@ -188,10 +188,10 @@ index daa02dd..2778440 100644
        /** \brief Performs Tsfg volume uptation (extra obsolete now)
          * \param[in] depth_raw Kinect depth image
 diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
-index 9ad25e6..2cb8cbf 100644
+index 7cf23b2..5a09b16 100644
 --- a/gpu/kinfu_large_scale/src/kinfu.cpp
 +++ b/gpu/kinfu_large_scale/src/kinfu.cpp
-@@ -318,6 +318,41 @@ pcl::gpu::kinfuLS::KinfuTracker::clearSphere(const Eigen::Vector3f & center,floa
+@@ -331,6 +331,41 @@ pcl::gpu::kinfuLS::KinfuTracker::clearSphere(const Eigen::Vector3f & center,floa
  
  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
  void

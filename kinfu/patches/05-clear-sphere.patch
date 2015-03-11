@@ -1,5 +1,5 @@
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
-index ea86056..9667101 100644
+index 1b5bd8b..5e9232c 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
 @@ -78,6 +78,8 @@ namespace pcl
@@ -26,10 +26,10 @@ index ea86056..9667101 100644
  
            /** \brief buffer used to extract XYZ values from GPU */
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
-index 81c0d87..33f63d5 100644
+index d572746..a7c1a6f 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
-@@ -400,6 +400,26 @@ pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const d
+@@ -406,6 +406,26 @@ pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const d
    
  }
  
@@ -57,10 +57,10 @@ index 81c0d87..33f63d5 100644
  
  #endif // PCL_WORLD_MODEL_IMPL_HPP_
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-index f94bc22..4b9e31b 100644
+index 24ac485..28cb3c2 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-@@ -149,6 +149,8 @@ namespace pcl
+@@ -146,6 +146,8 @@ namespace pcl
            int
            rows ();
  
@@ -70,7 +70,7 @@ index f94bc22..4b9e31b 100644
            {
              enum Type
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h
-index 3acd05c..14f4d7a 100644
+index 0973b23..dafc263 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/tsdf_volume.h
 @@ -148,6 +148,9 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -84,7 +84,7 @@ index 3acd05c..14f4d7a 100644
            * \param[out] cloud output array for cloud
            * \param[in] connected26 If false point cloud is extracted using 6 neighbor, otherwise 26.
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
-index ab1f264..615bcba 100644
+index 9f3f396..959c5a1 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/world_model.h
 @@ -145,6 +145,8 @@ namespace pcl
@@ -97,7 +97,7 @@ index ab1f264..615bcba 100644
            */
          PointCloudPtr getWorld () 
 diff --git a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
-index d204f26..1bf7b14 100644
+index 725a79e..739f66c 100644
 --- a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
 +++ b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
 @@ -62,8 +62,45 @@ namespace pcl
@@ -167,18 +167,11 @@ index d204f26..1bf7b14 100644
      }
    }
  }
-@@ -701,4 +751,4 @@ namespace pcl
-       }
-     }
-   }
--}
-\ No newline at end of file
-+}
 diff --git a/gpu/kinfu_large_scale/src/internal.h b/gpu/kinfu_large_scale/src/internal.h
-index c1b2cbb..d27061e 100644
+index 9b914e2..daa02dd 100644
 --- a/gpu/kinfu_large_scale/src/internal.h
 +++ b/gpu/kinfu_large_scale/src/internal.h
-@@ -264,6 +264,16 @@ namespace pcl
+@@ -201,6 +201,16 @@ namespace pcl
        PCL_EXPORTS void
        initVolume(PtrStep<short2> array);
  
@@ -196,10 +189,10 @@ index c1b2cbb..d27061e 100644
        /** \brief Performs Tsfg volume uptation (extra obsolete now)
          * \param[in] depth_raw Kinect depth image
 diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
-index b437c76..2b025ae 100644
+index 2bf06b7..0f7a67e 100644
 --- a/gpu/kinfu_large_scale/src/kinfu.cpp
 +++ b/gpu/kinfu_large_scale/src/kinfu.cpp
-@@ -291,6 +291,32 @@ pcl::gpu::kinfuLS::KinfuTracker::reset ()
+@@ -292,6 +292,32 @@ pcl::gpu::kinfuLS::KinfuTracker::reset ()
  
  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
  void

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015, Riccardo Monica
+ * Copyright (c) 2015, Riccardo Monica
  *   RIMLab, Department of Information Engineering, University of Parma, Italy
  *   http://www.rimlab.ce.unipr.it/
  *
@@ -28,20 +28,38 @@
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef PARAMETERS_H
-#define PARAMETERS_H
+#ifndef KINFU_OUTPUT_ACTION_CONVERSIONS_H
+#define KINFU_OUTPUT_ACTION_CONVERSIONS_H
 
-// input topics
-#define PARAM_NAME_RESPONSE_TOPIC         "kinfu_response_topic"
-#define PARAM_DEFAULT_RESPONSE_TOPIC      "/kinfu_response_topic"
+#include <kinfu_msgs/KinfuTsdfResponse.h>
+#include <kinfu_msgs/RequestAction.h>
 
-#define PARAM_NAME_REQUEST_ACTION_NAME    "request_action_name"
-#define PARAM_DEFAULT_REQUEST_ACTION_NAME "/kinfu_output/actions/request"
+// ROS
+#include <sensor_msgs/PointCloud2.h>
+#include <std_msgs/Header.h>
+#include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/UInt64MultiArray.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl_msgs/PolygonMesh.h>
+#include <sensor_msgs/Image.h>
 
-#define PARAM_NAME_REQUEST_ACTION_MAGIC   "kinfu_output_request_action_magic"
-#define PARAM_DEFAULT_REQUEST_ACTION_MAGIC "KINFU_OUTPUT_ACTION_MAGIC_SOURCE_NAME"
+// PCL
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
 
-#define PARAM_NAME_KINFU_REQUEST_TOPIC    "kinfu_request_topic"
-#define PARAM_DEFAULT_KINFU_REQUEST_TOPIC "/kinfu_request_topic"
+// STL
+#include <vector>
+#include <string>
+#include <stdint.h>
 
-#endif // PARAMETERS_H
+void ConvertToActionResponse(const kinfu_msgs::KinfuTsdfResponse &response, kinfu_msgs::RequestResult &result);
+
+void ConvertTsdfToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
+void ConvertCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
+void ConvertMeshToMeshMsg(const kinfu_msgs::KinfuTsdfResponse & resp,pcl_msgs::PolygonMesh & data);
+void ConvertIntensityCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
+void ConvertUintArrayToMsg(const kinfu_msgs::KinfuTsdfResponse & resp,std_msgs::UInt64MultiArray &data,
+  const std::vector<std::string> & dims,const std::vector<uint64_t> & sizes);
+void ConvertGridToMsg(const kinfu_msgs::KinfuTsdfResponse & resp,std_msgs::Float32MultiArray & data);
+
+#endif // KINFU_OUTPUT_ACTION_CONVERSIONS_H

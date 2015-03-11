@@ -133,22 +133,23 @@ void CommandSubscriber::commandCallback(const kinfu_msgs::KinfuCommand & cmd)
     {
     ROS_INFO("kinfu: command: clear bbox.");
     if (cmd.float_data.size() < 6)
-      ROS_ERROR("kinfu: command: a sphere requires 6 float_data params.");
+      ROS_ERROR("kinfu: command: a bounding box requires 6 float_data params.");
     else
       {
-      Eigen::Vector3f min,max;
+      Eigen::Vector3f w_min,w_max;
       Eigen::Vector3f kinfu_min,kinfu_max;
       for (uint i = 0; i < 3; i++)
-        min[i] = cmd.float_data[i];
+        w_min[i] = cmd.float_data[i];
       for (uint i = 0; i < 3; i++)
-        max[i] = cmd.float_data[i + 3];
+        w_max[i] = cmd.float_data[i + 3];
 
-      kinfu_min = m_initial_transformation * min;
-      kinfu_max = m_initial_transformation * max;
+      w_min = m_initial_transformation * w_min;
+      w_max = m_initial_transformation * w_max;
+      kinfu_min = w_min.array().min(w_max.array());
+      kinfu_max = w_min.array().max(w_max.array());
 
       m_clear_bbox = BBox::Ptr(new BBox(kinfu_min,kinfu_max,cmd.command_id));
       }
-
     }
   else if (cmd.command_type == cmd.COMMAND_TYPE_TRIGGER)
     {

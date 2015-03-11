@@ -4,13 +4,16 @@ project(kinfu_msgs)
 find_package(catkin REQUIRED COMPONENTS
   message_generation
   std_msgs
+  sensor_msgs
+  geometry_msgs
+  actionlib_msgs
+  pcl_msgs
 )
 
 ################################################
 ## Declare ROS messages, services and actions ##
 ################################################
 
-## Generate messages in the 'msg' folder
 add_message_files(
   DIRECTORY msg
     FILES
@@ -21,19 +24,31 @@ add_message_files(
     KinfuTsdfPoint.msg
     KinfuTsdfRequest.msg
     KinfuTsdfResponse.msg
+    KinfuPose.msg
+    KinfuCameraIntrinsics.msg
   )
 
-## Generate added messages and services with any dependencies listed here
+add_action_files(
+  DIRECTORY
+    action
+  FILES
+    Request.action
+  )
+
 generate_messages(
   DEPENDENCIES
   std_msgs
+  sensor_msgs
+  geometry_msgs
+  actionlib_msgs
+  pcl_msgs
   )
 
 ###################################
 ## catkin specific configuration ##
 ###################################
 catkin_package(
-  CATKIN_DEPENDS message_runtime
+  CATKIN_DEPENDS message_runtime sensor_msgs
 )
 
 ###########

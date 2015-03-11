@@ -1,9 +1,9 @@
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-index 4b9e31b..b75b17e 100644
+index 28cb3c2..666726a 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
-@@ -493,6 +493,8 @@ namespace pcl  
-
+@@ -500,6 +500,8 @@ namespace pcl
+ 
            /** \brief True or false depending on if there was a shift in the last pose update */
            bool has_shifted_;
 +
@@ -12,7 +12,7 @@ index 4b9e31b..b75b17e 100644
          public:
            EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
-index 2b025ae..eddb07e 100644
+index 0f7a67e..7cf23b2 100644
 --- a/gpu/kinfu_large_scale/src/kinfu.cpp
 +++ b/gpu/kinfu_large_scale/src/kinfu.cpp
 @@ -120,6 +120,7 @@ pcl::gpu::kinfuLS::KinfuTracker::KinfuTracker (const Eigen::Vector3f &volume_siz
@@ -49,7 +49,7 @@ index 2b025ae..eddb07e 100644
    PCL_INFO("Done\n");
  
    pcl::PointCloud<pcl::PointXYZI>::Ptr result =
-@@ -287,6 +296,8 @@ pcl::gpu::kinfuLS::KinfuTracker::reset ()
+@@ -288,6 +297,8 @@ pcl::gpu::kinfuLS::KinfuTracker::reset ()
    
    lost_=false;
    has_shifted_=false;
@@ -58,7 +58,7 @@ index 2b025ae..eddb07e 100644
  }
  
  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-@@ -313,6 +324,8 @@ pcl::gpu::kinfuLS::KinfuTracker::clearSphere(const Eigen::Vector3f & center,floa
+@@ -314,6 +325,8 @@ pcl::gpu::kinfuLS::KinfuTracker::clearSphere(const Eigen::Vector3f & center,floa
    // a sphere must be cleared in the downloaded world model
    // this also updates the knowledge octree
    cyclical_.clearSphere(expanded_center,expanded_radius);
@@ -67,7 +67,7 @@ index 2b025ae..eddb07e 100644
  }
  
  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-@@ -628,6 +641,8 @@ pcl::gpu::kinfuLS::KinfuTracker::performPairWiseICP(const Intr cam_intrinsics, M
+@@ -631,6 +644,8 @@ pcl::gpu::kinfuLS::KinfuTracker::performPairWiseICP(const Intr cam_intrinsics, M
  bool
  pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THint & hint)
  { 
@@ -76,7 +76,7 @@ index 2b025ae..eddb07e 100644
    // Intrisics of the camera
    Intr intr (fx_, fy_, cx_, cy_);
    
-@@ -907,6 +922,8 @@ pcl::gpu::kinfuLS::KinfuTracker::initColorIntegration(int max_weight)
+@@ -916,6 +931,8 @@ pcl::gpu::kinfuLS::KinfuTracker::initColorIntegration(int max_weight)
  bool 
  pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth, const View& colors, const THint & hint)
  { 

@@ -37,8 +37,11 @@
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <std_msgs/Header.h>
+#include <std_msgs/Float32MultiArray.h>
+#include <std_msgs/UInt64MultiArray.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_msgs/PolygonMesh.h>
+#include <sensor_msgs/Image.h>
 
 // ROS custom messages
 #include <kinfu_msgs/KinfuTsdfResponse.h>
@@ -46,6 +49,8 @@
 
 // custom
 #include "parameters.h"
+#include "request_action_manager.h"
+#include "kinfu_output_action_conversions.h"
 
 typedef unsigned int uint;
 
@@ -131,28 +136,7 @@ class TQueuedTsdfResponse: public TQueuedResponse<sensor_msgs::PointCloud2>,
     const kinfu_msgs::KinfuTsdfResponse & resp):
     TQueuedResponse(nh,resp.tsdf_header.request_source_name)
   {
-    uint cloud_size = resp.tsdf_cloud.size();
-    pcl::PointCloud<pcl::PointXYZI> pointcloud;
-
-    pointcloud.reserve(cloud_size);
-    for (uint i = 0; i < cloud_size; i++)
-    {
-      pcl::PointXYZI p;
-      const kinfu_msgs::KinfuTsdfPoint & tp = resp.tsdf_cloud[i];
-
-      p.x = tp.x;
-      p.y = tp.y;
-      p.z = tp.z;
-      p.intensity = tp.i;
-
-      pointcloud.push_back(p);
-    }
-
-    pcl::toROSMsg(pointcloud,m_data);
-
-    m_data.header.seq = resp.tsdf_header.request_id;
-    m_data.header.stamp = ros::Time::now();
-    m_data.header.frame_id = resp.reference_frame_id;
+    ConvertTsdfToPointCloud2(resp,m_data);
   }
 
   // solve multi-inheritance conflict
@@ -168,27 +152,7 @@ class TQueuedCloudResponse: public TQueuedResponse<sensor_msgs::PointCloud2>,
     const kinfu_msgs::KinfuTsdfResponse & resp):
     TQueuedResponse(nh,resp.tsdf_header.request_source_name)
   {
-    uint cloud_size = resp.point_cloud.size();
-    pcl::PointCloud<pcl::PointXYZ> pointcloud;
-
-    pointcloud.reserve(cloud_size);
-    for (uint i = 0; i < cloud_size; i++)
-    {
-      pcl::PointXYZ p;
-      const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
-
-      p.x = tp.x;
-      p.y = tp.y;
-      p.z = tp.z;
-
-      pointcloud.push_back(p);
-    }
-
-    pcl::toROSMsg(pointcloud,m_data);
-
-    m_data.header.seq = resp.tsdf_header.request_id;
-    m_data.header.stamp = ros::Time::now();
-    m_data.header.frame_id = resp.reference_frame_id;
+    ConvertCloudToPointCloud2(resp,m_data);
   }
 
   // solve multi-inheritance conflict
@@ -204,41 +168,7 @@ class TQueuedMeshResponse: public TQueuedResponse<pcl_msgs::PolygonMesh>,
     const kinfu_msgs::KinfuTsdfResponse & resp):
     TQueuedResponse(nh,resp.tsdf_header.request_source_name)
   {
-    uint points_size = resp.point_cloud.size();
-    uint triangles_size = resp.triangles.size();
-    pcl::PointCloud<pcl::PointXYZ> pointcloud;
-
-    pointcloud.reserve(points_size);
-    for (uint i = 0; i < points_size; i++)
-    {
-      pcl::PointXYZ p;
-      const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
-
-      p.x = tp.x;
-      p.y = tp.y;
-      p.z = tp.z;
-
-      pointcloud.push_back(p);
-    }
-
-    pcl::toROSMsg(pointcloud,m_data.cloud);
-
-    m_data.polygons.reserve(triangles_size);
-    for (uint i = 0; i < triangles_size; i++)
-    {
-      pcl_msgs::Vertices v;
-      const kinfu_msgs::KinfuMeshTriangle & t = resp.triangles[i];
-
-      v.vertices.resize(3);
-      for (uint h = 0; h < 3; h++)
-        v.vertices[h] = t.vertex_id[h];
-
-      m_data.polygons.push_back(v);
-    }
-
-    m_data.header.seq = resp.tsdf_header.request_id;
-    m_data.header.stamp = ros::Time::now();
-    m_data.header.frame_id = resp.reference_frame_id;
+    ConvertMeshToMeshMsg(resp,m_data);
   }
 
   // solve multi-inheritance conflict
@@ -263,26 +193,100 @@ class TQueuedPingResponse: public TQueuedResponse<std_msgs::Header>,
   bool IsEnded() {return TQueuedResponse<std_msgs::Header>::_IsEnded(); }
 };
 
+class TQueuedImageResponse: public TQueuedResponse<sensor_msgs::Image>,
+  public IQueuedResponse
+{
+  public:
+  TQueuedImageResponse(ros::NodeHandle & nh,const kinfu_msgs::KinfuTsdfResponse & resp):
+    TQueuedResponse(nh,resp.tsdf_header.request_source_name)
+  {
+    m_data = resp.image;
+    m_data.header.stamp = ros::Time::now();
+    m_data.header.seq = resp.tsdf_header.request_id;
+  }
+
+  // solve multi-inheritance conflict
+  void Update() {TQueuedResponse<sensor_msgs::Image>::_Update(); }
+  bool IsEnded() {return TQueuedResponse<sensor_msgs::Image>::_IsEnded(); }
+};
+
+class TQueuedIntensityCloudResponse: public TQueuedResponse<sensor_msgs::PointCloud2>,
+  public IQueuedResponse
+{
+  public:
+  TQueuedIntensityCloudResponse(ros::NodeHandle & nh,
+    const kinfu_msgs::KinfuTsdfResponse & resp):
+    TQueuedResponse(nh,resp.tsdf_header.request_source_name)
+  {
+    ConvertIntensityCloudToPointCloud2(resp,m_data);
+  }
+
+  // solve multi-inheritance conflict
+  void Update() {TQueuedResponse<sensor_msgs::PointCloud2>::_Update(); }
+  bool IsEnded() {return TQueuedResponse<sensor_msgs::PointCloud2>::_IsEnded(); }
+};
+
+class TQueuedUintArrayResponse: public TQueuedResponse<std_msgs::UInt64MultiArray>,
+  public IQueuedResponse
+{
+  public:
+  typedef typename std::vector<std::string> TStringVector;
+  typedef typename std::vector<long unsigned int> TUintVector;
+
+  TQueuedUintArrayResponse(ros::NodeHandle & nh,
+    const kinfu_msgs::KinfuTsdfResponse & resp,const TStringVector & dims,const TUintVector & sizes):
+    TQueuedResponse(nh,resp.tsdf_header.request_source_name)
+  {
+    ConvertUintArrayToMsg(resp,m_data,dims,sizes);
+  }
+
+  // solve multi-inheritance conflict
+  void Update() {TQueuedResponse<std_msgs::UInt64MultiArray>::_Update(); }
+  bool IsEnded() {return TQueuedResponse<std_msgs::UInt64MultiArray>::_IsEnded(); }
+};
+
+class TQueuedGridResponse: public TQueuedResponse<std_msgs::Float32MultiArray>,
+  public IQueuedResponse
+{
+  public:
+  TQueuedGridResponse(ros::NodeHandle & nh,
+    const kinfu_msgs::KinfuTsdfResponse & resp):
+    TQueuedResponse(nh,resp.tsdf_header.request_source_name)
+  {
+    ConvertGridToMsg(resp,m_data);
+  }
+
+  // solve multi-inheritance conflict
+  void Update() {TQueuedResponse<std_msgs::Float32MultiArray>::_Update(); }
+  bool IsEnded() {return TQueuedResponse<std_msgs::Float32MultiArray>::_IsEnded(); }
+};
+
 class ResponseConverter
 {
   public:
   typedef boost::shared_ptr<pcl_msgs::PolygonMesh> MeshPtr;
 
-  ResponseConverter(ros::NodeHandle & nh): m_nh(nh)
+  ResponseConverter(ros::NodeHandle & nh): m_nh(nh), m_ramgr(nh)
   {
     nh.param<std::string>(PARAM_NAME_RESPONSE_TOPIC,m_response_topic_name,PARAM_DEFAULT_RESPONSE_TOPIC);
-    m_sub = nh.subscribe<kinfu_msgs::KinfuTsdfResponse>(m_response_topic_name,10,&ResponseConverter::callback,this);
+    m_sub = nh.subscribe(m_response_topic_name,10,&ResponseConverter::callback,this);
   }
 
-  void callback(const kinfu_msgs::KinfuTsdfResponse response)
+  void callback(const kinfu_msgs::KinfuTsdfResponse & response)
   {
-    uint tsdf_size = response.tsdf_cloud.size();
-    uint cloud_size = response.point_cloud.size();
-    uint triangles_size = response.triangles.size();
+    const uint tsdf_size = response.tsdf_cloud.size();
+    const uint cloud_size = response.point_cloud.size();
+    const uint triangles_size = response.triangles.size();
+    const uint pixels = response.image.height * response.image.width;
+    const uint uint64_values = response.uint_values.size();
+    const uint float32_values = response.float_values.size();
 
-    ROS_INFO("kinfu_output: \nReceived response with\n    %u tsdf points,\n"
-      "    %u point cloud points\nand %u triangles.\n",
-      tsdf_size,cloud_size,triangles_size);
+    ROS_INFO("kinfu_output: \nReceived response with\n    %u tsdf points\n"
+      "    %u point cloud points\n    %u triangles\n    %u pixels\n    %u uint64 values\n    %u float32 values\n",
+      tsdf_size,cloud_size,triangles_size,pixels,uint64_values,float32_values);
+
+    if (m_ramgr.HandleResponse(response))
+      return; // handled by the action manager
 
     if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_PING)
     {
@@ -304,6 +308,30 @@ class ResponseConverter
     {
       m_queue.push_back(PQueuedResponse(new TQueuedCloudResponse(m_nh,response)));
     }
+    else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VIEW)
+    {
+      m_queue.push_back(PQueuedResponse(new TQueuedImageResponse(m_nh,response)));
+    }
+    else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VIEW_CLOUD)
+    {
+      m_queue.push_back(PQueuedResponse(new TQueuedIntensityCloudResponse(m_nh,response)));
+    }
+    else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VOXEL_COUNT)
+    {
+      TQueuedUintArrayResponse::TStringVector dims;
+      dims.push_back("Voxel type");
+      dims.push_back("View number");
+      TQueuedUintArrayResponse::TUintVector sizes;
+      sizes.push_back(2);
+      sizes.push_back(response.uint_values.size() / 2);
+      m_queue.push_back(PQueuedResponse(new TQueuedUintArrayResponse(m_nh,response,dims,sizes)));
+    }
+    else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VOXELGRID)
+    {
+      m_queue.push_back(PQueuedResponse(new TQueuedGridResponse(m_nh,response)));
+    }
+    else
+      ROS_ERROR("kinfu_output: received unknown response type %u.",uint(response.tsdf_header.request_type));
 
   }
 
@@ -335,6 +363,8 @@ class ResponseConverter
   std::string m_response_topic_name;
 
   ros::Subscriber m_sub;
+
+  RequestActionManager m_ramgr;
 
   std::list<PQueuedResponse> m_queue;
 };

@@ -45,6 +45,8 @@
 
 // STL
 #include <deque>
+#include <stdint.h>
+#include <vector>
 
 // ROS
 #include <ros/ros.h>
@@ -60,6 +62,7 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
   typedef boost::shared_ptr<TWeightCubeListener> Ptr;
   typedef unsigned int uint;
+  typedef uint64_t uint64;
 
   TWeightCubeListener();
   ~TWeightCubeListener();
@@ -98,17 +101,14 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
     typedef boost::shared_ptr<NewCubeInfo> Ptr;
     };
 
-  struct ClearSphereInfo
-    {
-    Eigen::Vector3f center;
-    float radius;
-    };
-
   void CubeWorker();
   void NewCubeWorker(NewCubeInfo::Ptr new_info);
   void RetrieveCubeWorker(NewCubeInfo::Ptr new_info);
 
   PointCloud::Ptr GetOccupiedVoxelCenters();
+  uint64 CountOccupiedVoxelsInSphere(const Eigen::Vector3f & center,float radius,bool inverse = false);
+  uint64 CountOccupiedVoxelsInBBox(const Eigen::Vector3f & bbox_min, const Eigen::Vector3f &bbox_max, bool inverse = false);
+  uint64 CountOccupiedVoxels() {return m_octree.GetPointCount(); }
 
   private:
   OccupancyOctree m_octree;

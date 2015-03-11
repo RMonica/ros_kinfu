@@ -53,7 +53,7 @@ index e0bad53..4086d94 100644
            /** \brief updates cyclical buffer origins given offsets on X, Y and Z
              * \param[in] tsdf_volume pointer to the TSDF volume managed by this cyclical buffer
 diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
-index 2064150..f65c485 100644
+index 0057e47..8f6c476 100644
 --- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
 +++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl/world_model.hpp
 @@ -438,7 +438,7 @@ pcl::kinfuLS::WorldModel<PointT>::clearBBox(const Eigen::Vector3f & min,const Ei
@@ -66,10 +66,10 @@ index 2064150..f65c485 100644
    }
  
 diff --git a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
-index 969067b..95dcbfb 100644
+index 1828378..e261313 100644
 --- a/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
 +++ b/gpu/kinfu_large_scale/src/cuda/tsdf_volume.cu
-@@ -369,6 +369,121 @@ namespace pcl
+@@ -369,6 +369,125 @@ namespace pcl
          }
        };
  
@@ -128,6 +128,8 @@ index 969067b..95dcbfb 100644
 +                    float tsdf;
 +                    int w;
 +                    unpack_tsdf(*pos, tsdf, w);
++                    if (w == 0)
++                      tsdf = 1.0;
 +                    pack_tsdf (tsdf, min(*ks + w,(Tsdf::MAX_WEIGHT)), *pos);
 +                  }
 +                }
@@ -181,6 +183,8 @@ index 969067b..95dcbfb 100644
 +                    float tsdf;
 +                    int w;
 +                    unpack_tsdf(*pos,tsdf,w);
++                    if (w == 0)
++                      tsdf = 1.0;
 +                    pack_tsdf (tsdf, min(*ks + w,(Tsdf::MAX_WEIGHT)), *pos);
 +                  }
 +                }
@@ -191,7 +195,7 @@ index 969067b..95dcbfb 100644
        __global__ void
        integrateTsdfKernel (const Tsdf tsdf) {
          tsdf ();
-@@ -800,6 +915,62 @@ namespace pcl
+@@ -800,6 +919,62 @@ namespace pcl
          cudaSafeCall ( cudaGetLastError () );
          cudaSafeCall (cudaDeviceSynchronize ());        
        }
@@ -384,20 +388,3 @@ index 2778440..bcc1e8f 100644
        
        /** \brief Initialzied color volume
          * \param[out] color_volume color volume for initialization
-diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
-index efe4b5a..5a09b16 100644
---- a/gpu/kinfu_large_scale/src/kinfu.cpp
-+++ b/gpu/kinfu_large_scale/src/kinfu.cpp
-@@ -696,6 +696,12 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
-     rmats_[0] = hint.transform.linear();
-     tvecs_[0] = hint.transform.translation();
-   }
-+
-+  if (has_hint && lost_)
-+  {
-+    lost_ = false;
-+    PCL_INFO("KinFu attempting to recover from hint.");
-+  }
-   
-   // process the incoming raw depth map
-   prepareMaps (depth_raw, intr);

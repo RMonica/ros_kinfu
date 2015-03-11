@@ -1,0 +1,10 @@
+kinfu_msgs/KinfuTsdfRequest request
+---
+std_msgs/Header header
+sensor_msgs/PointCloud2 pointcloud
+pcl_msgs/PolygonMesh mesh
+sensor_msgs/Image image
+std_msgs/Float32MultiArray float_values
+std_msgs/UInt64MultiArray uint_values
+---
+

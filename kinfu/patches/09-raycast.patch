@@ -1,0 +1,335 @@
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
+index 4086d94..dafbe29 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/cyclical_buffer.h
+@@ -264,6 +264,7 @@ namespace pcl
+           }
+ 
+           void checkOldCubeRetrieval(const TsdfVolume::Ptr volume);
++          bool isOldCubeRetrieved() const {return old_cube_retrieved_; }
+ 
+         private:
+ 
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
+index ed1582a..d73465d 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/kinfu.h
+@@ -196,6 +196,23 @@ namespace pcl
+           Eigen::Affine3f
+           getLastEstimatedPose () const;
+ 
++          /** \brief shifts the TSDF volume near a point, to prepare for further computations
++            * \param[in] pose the virtual kinect pose
++            * \param[in] distance the distance at which the volume must be placed if a shift occurs
++            * \returns whether a shift was necessary
++            */
++          bool shiftNear (const Eigen::Affine3f & pose, float distance = 0.0f);
++
++          /** \brief is last shift complete or still in progress?
++            * \returns if it's complete
++            */
++          bool isShiftComplete() const {return cyclical_.isOldCubeRetrieved(); }
++
++          /** \brief if not isShiftComplete(), you may try updateShift() to update it
++            *
++            */
++          void updateShift() {cyclical_.checkOldCubeRetrieval(tsdf_volume_);}
++
+           /** \brief Returns number of poses including initial */
+           size_t
+           getNumberOfPoses () const;
+diff --git a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h
+index 5af9398..5208662 100644
+--- a/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h
++++ b/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/raycaster.h
+@@ -94,7 +94,7 @@ namespace pcl
+           * \param buffer
+           */ 
+         void 
+-        run(const TsdfVolume& volume, const Eigen::Affine3f& camera_pose, tsdf_buffer* buffer);
++        run(const TsdfVolume& volume, const Eigen::Affine3f& camera_pose, tsdf_buffer* buffer, bool with_known = false);
+ 
+         /** \brief Generates scene view using data raycasted by run method. So call it before.
+           * \param[out] view output array for RGB image        
+@@ -123,6 +123,10 @@ namespace pcl
+         MapArr
+         getNormalMap() const;
+ 
++        /** \brief Returns raycasterd known map. */
++        MapArr
++        getKnownMap() const {return known_map_; }
++
+       private:
+         /** \brief Camera intrinsics. */ 
+         float fx_, fy_, cx_, cy_;
+@@ -142,6 +146,9 @@ namespace pcl
+         /** \brief normal map of 3D points*/
+         MapArr normal_map_;
+ 
++        /** \brief known status of 3D points*/
++        MapArr known_map_;
++
+         /** \brief camera pose from which raycasting was done */
+         Eigen::Affine3f camera_pose_;
+ 
+diff --git a/gpu/kinfu_large_scale/src/cuda/ray_caster.cu b/gpu/kinfu_large_scale/src/cuda/ray_caster.cu
+index 70150ca..3ba07dc 100644
+--- a/gpu/kinfu_large_scale/src/cuda/ray_caster.cu
++++ b/gpu/kinfu_large_scale/src/cuda/ray_caster.cu
+@@ -64,6 +64,7 @@ namespace pcl
+         return fmin (fmin (txmax, tymax), tzmax);
+       }
+ 
++      template <bool SEARCH_UNKNOWN>
+       struct RayCaster
+       {
+         enum { CTA_SIZE_X = 32, CTA_SIZE_Y = 8 };
+@@ -83,6 +84,7 @@ namespace pcl
+ 
+         mutable PtrStep<float> nmap;
+         mutable PtrStep<float> vmap;
++        mutable PtrStep<float> umap; // intensity values
+ 
+         __device__ __forceinline__ float3
+         get_ray_next (int x, int y) const
+@@ -109,6 +111,15 @@ namespace pcl
+           return unpack_tsdf (*pos);
+         }
+ 
++        __device__ __forceinline__ void
++        readTsdf (int x, int y, int z, pcl::gpu::kinfuLS::tsdf_buffer buffer,float& tsdf, int& weight) const
++        {
++          const short2* tmp_pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
++          short2* pos = const_cast<short2*> (tmp_pos);
++          shift_tsdf_pointer(&pos, buffer);
++          unpack_tsdf (*pos,tsdf,weight);
++        }
++
+         __device__ __forceinline__ int3
+         getVoxel (float3 point) const
+         {
+@@ -201,7 +212,10 @@ namespace pcl
+             return;
+ 
+           vmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
+-          nmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
++          if (!SEARCH_UNKNOWN)
++            nmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
++          else
++            umap.ptr (y)[x] = -1.0; // empty
+ 
+           float3 ray_start = tcurr;
+           float3 ray_next = Rcurr * get_ray_next (x, y) + tcurr;
+@@ -228,7 +242,9 @@ namespace pcl
+           g.y = max (0, min (g.y, buffer.voxels_size.y - 1));
+           g.z = max (0, min (g.z, buffer.voxels_size.z - 1));
+ 
+-          float tsdf = readTsdf (g.x, g.y, g.z, buffer);
++          float tsdf;
++          int weight;
++          readTsdf(g.x, g.y, g.z, buffer, tsdf, weight);
+ 
+           //infinite loop guard
+           const float max_time = 3 * (volume_size.x + volume_size.y + volume_size.z);
+@@ -241,23 +257,30 @@ namespace pcl
+             if (!checkInds (g))
+               break;
+ 
+-            tsdf = readTsdf (g.x, g.y, g.z, buffer);
++            readTsdf (g.x, g.y, g.z, buffer, tsdf, weight);
+ 
+             if (tsdf_prev < 0.f && tsdf > 0.f)
+               break;
+ 
+-            if (tsdf_prev > 0.f && tsdf < 0.f)           //zero crossing
++            if ((weight != 0 && tsdf < 0.f) || (SEARCH_UNKNOWN && weight == 0))
+             {
+-              float Ftdt = interpolateTrilineary (ray_start, ray_dir, time_curr + time_step, buffer);
+-              if (isnan (Ftdt))
+-                break;
++              float step_correction = 0.5;
+ 
+-              float Ft = interpolateTrilineary (ray_start, ray_dir, time_curr, buffer);
+-              if (isnan (Ft))
+-                break;
++              if (!SEARCH_UNKNOWN || (weight != 0))
++              {
++                float Ftdt = interpolateTrilineary (ray_start, ray_dir, time_curr + time_step, buffer);
++                if (isnan (Ftdt))
++                  break;
+ 
+-              //float Ts = time_curr - time_step * Ft/(Ftdt - Ft);
+-              float Ts = time_curr - time_step * Ft / (Ftdt - Ft);
++                float Ft = interpolateTrilineary (ray_start, ray_dir, time_curr, buffer);
++                if (isnan (Ft))
++                  break;
++
++                if (abs(Ftdt - Ft) > 0.1)
++                  step_correction = Ft / (Ftdt - Ft);
++              }
++
++              float Ts = time_curr - time_step * step_correction;
+ 
+               float3 vetex_found = ray_start + ray_dir * Ts;
+ 
+@@ -265,6 +288,15 @@ namespace pcl
+               vmap.ptr (y + rows)[x] = vetex_found.y;
+               vmap.ptr (y + 2 * rows)[x] = vetex_found.z;
+ 
++              if (SEARCH_UNKNOWN)
++              {
++                if (weight == 0)
++                  umap.ptr(y)[x] = 0.0; // unknown
++                else
++                  umap.ptr(y)[x] = 1.0; // occupied
++                break;
++              }
++
+               int3 g = getVoxel ( ray_start + ray_dir * time_curr );
+               if (g.x > 1 && g.y > 1 && g.z > 1 && g.x < buffer.voxels_size.x - 2 && g.y < buffer.voxels_size.y - 2 && g.z < buffer.voxels_size.z - 2)
+               {
+@@ -314,18 +346,20 @@ namespace pcl
+         }
+       };
+ 
++      template <bool SEARCH_UNKNOWN>
+       __global__ void
+-      rayCastKernel (const RayCaster rc, pcl::gpu::kinfuLS::tsdf_buffer buffer) {
++      rayCastKernel (const RayCaster<SEARCH_UNKNOWN> rc, pcl::gpu::kinfuLS::tsdf_buffer buffer) {
+         rc (buffer);
+       }
+ 
+       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
++      template <bool SEARCH_UNKNOWN>
+       void
+-      raycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, 
++      templatedRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                             float tranc_dist, const float3& volume_size,
+                             const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap)
+       {
+-        RayCaster rc;
++        RayCaster<SEARCH_UNKNOWN> rc;
+ 
+         rc.Rcurr = Rcurr;
+         rc.tcurr = tcurr;
+@@ -345,15 +379,34 @@ namespace pcl
+ 
+         rc.volume = volume;
+         rc.vmap = vmap;
+-        rc.nmap = nmap;
++        if (!SEARCH_UNKNOWN)
++          rc.nmap = nmap;
++        else
++          rc.umap = nmap;
+ 
+-        dim3 block (RayCaster::CTA_SIZE_X, RayCaster::CTA_SIZE_Y);
++        dim3 block (RayCaster<SEARCH_UNKNOWN>::CTA_SIZE_X, RayCaster<SEARCH_UNKNOWN>::CTA_SIZE_Y);
+         dim3 grid (divUp (rc.cols, block.x), divUp (rc.rows, block.y));
+ 
+-        rayCastKernel<<<grid, block>>>(rc, *buffer);
++        rayCastKernel<SEARCH_UNKNOWN><<<grid, block>>>(rc, *buffer);
+         cudaSafeCall (cudaGetLastError ());
+         cudaSafeCall(cudaDeviceSynchronize());
+       }
++
++      void
++      raycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
++                            float tranc_dist, const float3& volume_size,
++                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap)
++      {
++        templatedRaycast<false>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,nmap);
++      }
++
++      void
++      unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
++                            float tranc_dist, const float3& volume_size,
++                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap)
++      {
++        templatedRaycast<true>(intr,Rcurr,tcurr,tranc_dist,volume_size,volume,buffer,vmap,umap);
++      }
+     }
+   }
+ }
+diff --git a/gpu/kinfu_large_scale/src/internal.h b/gpu/kinfu_large_scale/src/internal.h
+index bcc1e8f..1fa42b9 100644
+--- a/gpu/kinfu_large_scale/src/internal.h
++++ b/gpu/kinfu_large_scale/src/internal.h
+@@ -303,6 +303,21 @@ namespace pcl
+       raycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, const float3& volume_size, 
+               const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap);
+ 
++      /** \brief Generation of vertex and known maps from volume for current camera pose
++        * \param[in] intr camera intrinsices
++        * \param[in] Rcurr current rotation
++        * \param[in] tcurr current translation
++        * \param[in] tranc_dist volume truncation distance
++        * \param[in] volume_size volume size in mm
++        * \param[in] volume tsdf volume
++        * \param[in] buffer cyclical buffer structure
++        * \param[out] vmap output vertex map
++        * \param[out] umap output known map
++        */
++      void
++      unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, const float3& volume_size,
++              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap);
++
+       /** \brief Renders 3D image of the scene
+         * \param[in] vmap vertex map
+         * \param[in] nmap normals map
+diff --git a/gpu/kinfu_large_scale/src/kinfu.cpp b/gpu/kinfu_large_scale/src/kinfu.cpp
+index 5a09b16..9e841a0 100644
+--- a/gpu/kinfu_large_scale/src/kinfu.cpp
++++ b/gpu/kinfu_large_scale/src/kinfu.cpp
+@@ -178,6 +178,15 @@ pcl::gpu::kinfuLS::KinfuTracker::rows ()
+   return (rows_);
+ }
+ 
++bool
++pcl::gpu::kinfuLS::KinfuTracker::shiftNear (const Eigen::Affine3f & pose, float distance)
++{
++  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, pose, distance, true, false);
++  if (has_shifted_)
++    just_shifted_ = true;
++  return has_shifted_;
++}
++
+ void
+ pcl::gpu::kinfuLS::KinfuTracker::extractAndSaveWorld ()
+ {
+diff --git a/gpu/kinfu_large_scale/src/raycaster.cpp b/gpu/kinfu_large_scale/src/raycaster.cpp
+index 32e90be..069cb14 100644
+--- a/gpu/kinfu_large_scale/src/raycaster.cpp
++++ b/gpu/kinfu_large_scale/src/raycaster.cpp
+@@ -72,7 +72,7 @@ pcl::gpu::kinfuLS::RayCaster::setIntrinsics(float fx, float fy, float cx, float
+ 
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ void 
+-pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& camera_pose, tsdf_buffer* buffer)
++pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& camera_pose, tsdf_buffer* buffer,bool with_known)
+ {  
+   camera_pose_.linear() = camera_pose.linear();
+   camera_pose_.translation() = camera_pose.translation();
+@@ -80,7 +80,10 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
+   pcl::device::kinfuLS::Intr intr (fx_, fy_, cx_, cy_);
+ 
+   vertex_map_.create(rows * 3, cols);
+-  normal_map_.create(rows * 3, cols);
++  if (!with_known)
++    normal_map_.create(rows * 3, cols);
++  else
++    known_map_.create(rows, cols);
+ 
+   typedef Matrix<float, 3, 3, RowMajor> Matrix3f;
+     
+@@ -97,7 +100,10 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
+   device_t.z -= buffer->origin_metric.z;
+   
+   float tranc_dist = volume.getTsdfTruncDist();  
+-  pcl::device::kinfuLS::raycast (intr, device_R, device_t, tranc_dist, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, normal_map_);  
++  if (!with_known)
++    pcl::device::kinfuLS::raycast (intr, device_R, device_t, tranc_dist, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, normal_map_);
++  else
++    pcl::device::kinfuLS::unkRaycast (intr, device_R, device_t, tranc_dist, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, known_map_);
+ }
+ 
+ ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

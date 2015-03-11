@@ -3,6 +3,7 @@ Author: Riccardo Monica <rmonica[at]ce.unipr.it>
   RIMLab, Department of Information Engineering, University of Parma, Italy
   http://www.rimlab.ce.unipr.it/
 
+-- INTRODUCTION --
 This repository contains a KinFu Large Scale wrapper for ROS (Robot Operating System, www.ros.org).
 KinFu is the KinectFusion implementation by the PCL (Point Cloud Library, www.pointclouds.org).
 The original version of this wrapper was developed by Michael Korn <michael.korn(at)uni-due.de> and published at "http://fsstud.is.uni-due.de/svn/ros/is/kinfu/". That version only published the synthetic depth map and the tracked TF frame of the Kinect during KinFu execution.
@@ -44,7 +45,9 @@ The kinfu_output package is an utility that:
 - converts them into a ROS-compatible suitable message
 - publishes them to a topic as specified by the request_source_name field in the tsdf_header.
 
-Unfortunately, since ROS is unable to guarantee the delivery of a message sent by a just-created publisher, the message is published TWICE, with overhead since these are usually huge messages. In the future, a new solution may be developed which uses actionlib, even if this could break the ability to just see in RViz the model as it's being published.
+Unfortunately, since ROS is unable to guarantee the delivery of a message sent by a just-created publisher, the message is published TWICE, with overhead since these are usually huge messages.
+
+An alternative solution was developed using actionlib, where the request is sent to the kinfu_output node inside an action (by default, "/kinfu_output/actions/request"). The node then forwards it to the kinfu node and, when a response is available, send it as the result of the action. Multiple actions may be active at the same time. See kinfu_msgs/action/Request.action.
 
 -- KINFU_TF_FEEDER --
 

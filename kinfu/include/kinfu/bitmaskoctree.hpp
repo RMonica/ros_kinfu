@@ -1,5 +1,7 @@
 #include "bitmaskoctree.h"
 
+#define pcl_BitmaskOctree_COUNT_FULL_LEAVES 0
+
 template <uint32_t LOWER_BITS>
   void pcl::BitmaskOctree<LOWER_BITS>::SetLeaf(const Key & k,bool v)
     {
@@ -10,11 +12,20 @@ template <uint32_t LOWER_BITS>
     // if not already set, update it and update point counter
     if ((*container)[bkey] != v)
       {
+#if pcl_BitmaskOctree_COUNT_FULL_LEAVES
+      if (!v && (container->count() == container->size()))
+        m_full_leaves--;
+#endif
+
       (*container)[bkey] = v;
       v ? m_point_count++ : m_point_count--;
 
       if (!v && (container->count() == 0))
         this->removeLeaf(okey); // leaf is now empty -> remove it
+#if pcl_BitmaskOctree_COUNT_FULL_LEAVES
+      if (v && (container->count() == container->size()))
+        m_full_leaves++;
+#endif
       }
     }
 

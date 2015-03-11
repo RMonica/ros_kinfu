@@ -25,6 +25,7 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
   typedef uint32_t uint32;
   typedef int32_t int32;
   typedef uint8_t uint8;
+  typedef uint64_t uint64;
 
   enum
     {
@@ -57,6 +58,7 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
     m_cz = 0;
 
     m_point_count = 0;
+    m_full_leaves = 0;
 
     this->setTreeDepth(1);
     m_octree_side = (1 << this->getTreeDepth());
@@ -155,8 +157,9 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
   // the current center is accessed with GetFloatCoords(float &x,&y,&z,scale)
   class TrueIterator;
 
-  uint32 GetPointCount() {return m_point_count; }
+  uint64 GetPointCount() {return m_point_count; }
   uint32 GetLeafCount() {return this->getLeafCount(); }
+  uint64 GetFullLeafCount() {return m_full_leaves; }
 
   void Serialize(std::ostream & out);
   void Deserialize(std::istream & in);
@@ -253,26 +256,11 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
   uint32 m_cy;
   uint32 m_cz;
 
-  uint32 m_point_count;
+  uint64 m_point_count;
+  uint64 m_full_leaves;
   };
 
-struct PointWithBitmask64
-  {
-  PCL_ADD_POINT4D;
-
-  uint8_t bitmask[64];
-
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-  } EIGEN_ALIGN16;
-
 }
-
-POINT_CLOUD_REGISTER_POINT_STRUCT(pcl::PointWithBitmask64,
-  (float,x,x)
-  (float,y,y)
-  (float,z,z)
-  (uint8_t[64],bitmask,bitmask)
-  );
 
 #include "bitmaskoctree.hpp"
 

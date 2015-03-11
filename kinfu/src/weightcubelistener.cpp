@@ -86,7 +86,7 @@ bool TWeightCubeListener::retrieveOldCube(WeightVectorPtr& weights,const Eigen::
       {
       // extraction complete!!
       if (!m_retrieved_weights)
-        return false; // error has occurred
+        return false; // error occurred
 
       weights = m_retrieved_weights;
       m_retrieved_weights = WeightVectorPtr();
@@ -115,6 +115,8 @@ bool TWeightCubeListener::retrieveOldCube(WeightVectorPtr& weights,const Eigen::
     m_queued_retrieving_cubes++;
     m_cube_cond.notify_all();
     }
+
+  return true;
   }
 
 void TWeightCubeListener::onClearSphere(const Eigen::Vector3f & center, float radius)
@@ -220,6 +222,75 @@ TWeightCubeListener::PointCloud::Ptr TWeightCubeListener::GetOccupiedVoxelCenter
   return result;
   }
 
+TWeightCubeListener::uint64 TWeightCubeListener::CountOccupiedVoxelsInSphere(const Eigen::Vector3f & center,float radius,bool inverse)
+  {
+  const Eigen::Vector3f expanded_center = center / m_voxel_size;
+  const float expanded_radius = radius / m_voxel_size;
+  const Eigen::Vector3f bbox_min = expanded_center - Eigen::Vector3f::Ones() * expanded_radius;
+  const Eigen::Vector3f bbox_max = expanded_center + Eigen::Vector3f::Ones() * expanded_radius;
+  const Eigen::Vector3i bbox_min_i = (bbox_min - Eigen::Vector3f::Ones() * 0.5).cast<int>();
+  const Eigen::Vector3i bbox_max_i = (bbox_max + Eigen::Vector3f::Ones() * 0.5).cast<int>();
+  const float sqr_e_radius = expanded_radius * expanded_radius;
+
+  uint64 count = 0;
+  // scope only
+    {
+    boost::mutex::scoped_lock lock(m_cube_mutex);
+    if (m_is_terminating)
+      return 0;
+    // wait for an empty queue
+    while ((!m_cube_queue.empty()) || (m_currently_working_cubes > 0))
+      {
+      m_cube_cond.wait(lock);
+      if (m_is_terminating)
+        return 0;
+      }
+
+    for (int x = bbox_min_i.x(); x <= bbox_max_i.x(); x++)
+      for (int y = bbox_min_i.y(); y <= bbox_max_i.y(); y++)
+        for (int z = bbox_min_i.z(); z <= bbox_max_i.z(); z++)
+          if ((Eigen::Vector3f(x,y,z) - expanded_center).squaredNorm() <= sqr_e_radius)
+            if (m_octree.GetInt(x,y,z) != inverse)
+              count++;
+
+    m_cube_cond.notify_all();
+    }
+
+  return count;
+  }
+
+TWeightCubeListener::uint64 TWeightCubeListener::CountOccupiedVoxelsInBBox(
+  const Eigen::Vector3f & bbox_min,const Eigen::Vector3f & bbox_max,bool inverse)
+  {
+  const Eigen::Vector3i bbox_min_i = (bbox_min / m_voxel_size).cast<int>();
+  const Eigen::Vector3i bbox_max_i = (bbox_max / m_voxel_size + Eigen::Vector3f::Ones() * 0.5).cast<int>();
+  uint64 count = 0;
+
+  // scope only
+    {
+    boost::mutex::scoped_lock lock(m_cube_mutex);
+    if (m_is_terminating)
+      return 0;
+    // wait for an empty queue
+    while ((!m_cube_queue.empty()) || (m_currently_working_cubes > 0))
+      {
+      m_cube_cond.wait(lock);
+      if (m_is_terminating)
+        return 0;
+      }
+
+    for (int x = bbox_min_i.x(); x <= bbox_max_i.x(); x++)
+      for (int y = bbox_min_i.y(); y <= bbox_max_i.y(); y++)
+        for (int z = bbox_min_i.z(); z <= bbox_max_i.z(); z++)
+          if (m_octree.GetInt(x,y,z) != inverse)
+            count++;
+
+    m_cube_cond.notify_all();
+    }
+
+  return count;
+  }
+
 void TWeightCubeListener::CubeWorker()
   {
   while (true)
@@ -303,7 +374,9 @@ void TWeightCubeListener::NewCubeWorker(NewCubeInfo::Ptr new_info)
         }
       }
     }
-  ROS_INFO("kinfu: NewCubeWorker: Done: set %u leaves.\n",leaves_count);
+  ROS_INFO("kinfu: NewCubeWorker: Done: set %u leaves.",leaves_count);
+  ROS_INFO("kinfu: NewCubeWorker: points are %u, bitmasks are %u, full bitmasks are %u.",
+    uint(m_octree.GetPointCount()),uint(m_octree.GetLeafCount()),uint(m_octree.GetFullLeafCount()));
 
   m_voxel_size = new_info->cube_size.x() / float(new_info->nb_voxels.x());
   }

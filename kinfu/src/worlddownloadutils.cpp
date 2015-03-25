@@ -326,6 +326,7 @@ void WorldDownloadManager::initRaycaster(bool has_intrinsics,const kinfu_msgs::K
   {
     ROS_INFO("kinfu: initializing raycaster...");
     m_raycaster = RayCaster::Ptr(new RayCaster(rows,cols));
+    m_raycaster->setRaycastStep(m_kinfu->volume().getTsdfTruncDist() * 0.6);
   }
 
   m_raycaster->setIntrinsics(fx,fy,cx,cy);

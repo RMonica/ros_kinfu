@@ -38,9 +38,21 @@
 #define PARAM_NAME_POSE_FRAME          "pose_frame_id"
 #define PARAM_DEFAULT_POSE_FRAME       "/kinfu_tf_feeder/pose_frame"
 
+// send any uint32 to start
+#define PARAM_NAME_START_TOPIC         "start_topic"
+#define PARAM_DEFAULT_START_TOPIC      "/kinfu_tf_feeder/start"
+
+// send any uint32 to stop
+#define PARAM_NAME_STOP_TOPIC          "stop_topic"
+#define PARAM_DEFAULT_STOP_TOPIC       "/kinfu_tf_feeder/stop"
+
 // output
 #define PARAM_NAME_KINFU_COMMAND_TOPIC "kinfu_command_topic"
 #define PARAM_DEFAULT_KINFU_COMMAND_TOPIC "/kinfu_command_topic"
+
+// read uint32 when start/stop done
+#define PARAM_NAME_ACK_TOPIC           "ack_topic"
+#define PARAM_DEFAULT_ACK_TOPIC        "/kinfu_tf_feeder/ack"
 
 // other configurations
 #define PARAM_NAME_POSE_TIMEOUT        "pose_timeout"
@@ -57,5 +69,8 @@
 
 #define PARAM_NAME_TRIGGERED           "triggered"
 #define PARAM_DEFAULT_TRIGGERED        false
+
+#define PARAM_NAME_AUTOSTART           "autostart"
+#define PARAM_DEFAULT_AUTOSTART        true
 
 #endif // KINFU_TF_FEEDER_H

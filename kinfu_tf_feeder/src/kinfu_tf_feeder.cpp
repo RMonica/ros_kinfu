@@ -35,6 +35,7 @@
 #include <tf/transform_listener.h>
 #include <eigen_conversions/eigen_msg.h>
 #include <tf_conversions/tf_eigen.h>
+#include <std_msgs/UInt32.h>
 
 // Boost
 #include <boost/shared_ptr.hpp>
@@ -68,10 +69,33 @@ class KinfuTFFeeder
     m_nh.param<bool>(PARAM_NAME_START_KINFU,m_start_kinfu,PARAM_DEFAULT_START_KINFU);
     m_nh.param<bool>(PARAM_NAME_FORCED,m_forced,PARAM_DEFAULT_FORCED);
     m_nh.param<bool>(PARAM_NAME_TRIGGERED,m_triggered,PARAM_DEFAULT_TRIGGERED);
+    m_nh.param<bool>(PARAM_NAME_AUTOSTART,m_running,PARAM_DEFAULT_AUTOSTART);
+
+    m_nh.param<std::string>(PARAM_NAME_START_TOPIC,param_string,PARAM_DEFAULT_START_TOPIC);
+    m_start_subscriber = m_nh.subscribe(param_string,5,&KinfuTFFeeder::onStart,this);
+    m_nh.param<std::string>(PARAM_NAME_STOP_TOPIC,param_string,PARAM_DEFAULT_STOP_TOPIC);
+    m_stop_subscriber = m_nh.subscribe(param_string,5,&KinfuTFFeeder::onStop,this);
+    m_nh.param<std::string>(PARAM_NAME_ACK_TOPIC,param_string,PARAM_DEFAULT_ACK_TOPIC);
+    m_ack_publisher = m_nh.advertise<std_msgs::UInt32>(param_string,1);
+    }
+
+  void onStart(const std_msgs::UInt32 & id)
+    {
+    m_running = true;
+    m_ack_publisher.publish(id);
+    }
+
+  void onStop(const std_msgs::UInt32 & id)
+    {
+    m_running = false;
+    m_ack_publisher.publish(id);
     }
 
   void Update()
     {
+    if (!m_running)
+      return;
+
     Eigen::Affine3d epose;
 
     try
@@ -115,6 +139,10 @@ class KinfuTFFeeder
   TransformListenerPtr m_transform_listener;
 
   ros::Publisher m_command_publisher;
+  ros::Publisher m_ack_publisher;
+
+  ros::Subscriber m_start_subscriber;
+  ros::Subscriber m_stop_subscriber;
 
   std::string m_reference_frame;
   std::string m_pose_frame;
@@ -125,6 +153,7 @@ class KinfuTFFeeder
 
   bool m_forced;
   bool m_triggered;
+  bool m_running;
 
   bool m_start_kinfu;
   };
@@ -141,6 +170,7 @@ int main(int argc,char ** argv)
   while (ros::ok())
     {
     kttf.Update();
+    ros::spinOnce();
     rate.sleep();
     }
 

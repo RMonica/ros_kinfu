@@ -421,7 +421,7 @@ struct KinFuLSApp
   {
     PCD_BIN = 1, PCD_ASCII = 2, PLY = 3, MESH_PLY = 7, MESH_VTK = 8
   };
-  KinFuLSApp(float vsz, float shiftDistance, ros::NodeHandle & nodeHandle) :
+  KinFuLSApp(float vsz, float shiftDistance, ros::NodeHandle & nodeHandle, uint depth_height, uint depth_width) :
       scan_(false), scan_mesh_(false), scan_volume_(false), independent_camera_(false),
       registration_(false), integrate_colors_(false), pcd_source_(false), focal_length_(-1.f),
       m_reset_subscriber(nodeHandle,m_mutex,m_cond),m_image_subscriber(nodeHandle,m_mutex,m_cond),
@@ -443,7 +443,7 @@ struct KinFuLSApp
     if(shiftDistance > 2.5 * vsz)
       ROS_WARN("WARNING Shifting distance (%.2f) is very large compared to the volume size (%.2f).\nYou can modify it using --shifting_distance.\n", shiftDistance, vsz);
 
-    kinfu_ = new pcl::gpu::kinfuLS::KinfuTracker(volume_size, shiftDistance);
+    kinfu_ = new pcl::gpu::kinfuLS::KinfuTracker(volume_size, shiftDistance, depth_height, depth_width);
     Eigen::Matrix3f R = Eigen::Matrix3f::Identity ();   // * AngleAxisf( pcl::deg2rad(-30.f), Vector3f::UnitX());
     Eigen::Vector3f t = volume_size * 0.5f - Eigen::Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
 
@@ -809,7 +809,11 @@ int main(int argc, char* argv[])
   nh.getParam(PARAM_NAME_SHIFT_DISTANCE, shift_distance);
   nh.getParam(PARAM_SNAME_SHIFT_DISTANCE, shift_distance);
 
-  KinFuLSApp app(volume_size, shift_distance, nh);
+  double depth_height = PARAM_DEFAULT_DEPTH_HEIGHT, depth_width = PARAM_DEFAULT_DEPTH_WIDTH;
+  nh.getParam(PARAM_NAME_DEPTH_HEIGHT,depth_height);
+  nh.getParam(PARAM_NAME_DEPTH_WIDTH,depth_width);
+
+  KinFuLSApp app(volume_size, shift_distance, nh, depth_height, depth_width);
 
   int snapshot_rate = PARAM_DEFAULT_SNAPSHOT_RATE;
   nh.getParam(PARAM_NAME_SNAPSHOT_RATE, snapshot_rate);

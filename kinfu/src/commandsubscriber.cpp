@@ -48,6 +48,7 @@ CommandSubscriber::CommandSubscriber(ros::NodeHandle &nh, tf::TransformListener 
 
   m_request_reset = false;
   m_forced_tf_frames = false;
+  m_is_triggered = false;
   m_hint_expiration = ros::Time(0);
 
   m_initial_transformation = Eigen::Affine3f::Identity();

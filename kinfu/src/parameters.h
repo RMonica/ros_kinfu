@@ -80,6 +80,12 @@
 #define PARAM_SNAME_EXTRACT_TEXTURES      "et"
 #define PARAM_DEFAULT_EXTRACT_TEXTURES    (bool(false))
 
+#define PARAM_NAME_DEPTH_WIDTH            "depth_width"
+#define PARAM_DEFAULT_DEPTH_WIDTH         640
+
+#define PARAM_NAME_DEPTH_HEIGHT           "depth_height"
+#define PARAM_DEFAULT_DEPTH_HEIGHT        480
+
 // if true, the kinfu engine will start automatically
 // otherwise, it will wait for a COMMAND_TYPE_RESUME
 #define PARAM_NAME_AUTOSTART              "autostart"

@@ -920,10 +920,11 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
 
     const uint64 addr = ipoint.x() * grid_x_step + ipoint.y() * grid_y_step + ipoint.z() * grid_z_step;
 
-    if (ppt.intensity > 0.0) // empty
-      voxelgrid[addr] = -1.0;
-    else if (ppt.intensity < 0.0)
+    if (ppt.intensity < 0.0)
       voxelgrid[addr] = 1.0; // occupied
+
+    if (ppt.intensity > 0.0 && voxelgrid[addr] < 0.5) // do not override occupied
+      voxelgrid[addr] = -1.0; // empty
   }
 
   ROS_INFO("kinfu: extracting empty voxels from knowledge octree...");
@@ -943,8 +944,8 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
 
       const uint64 addr = ipoint.x() * grid_x_step + ipoint.y() * grid_y_step + ipoint.z() * grid_z_step;
 
-      if (voxelgrid[addr] > -0.5 && voxelgrid[addr] < 0.5) // do not override known
-        voxelgrid[addr] = -1.0;
+      if (voxelgrid[addr] > -0.5 && voxelgrid[addr] < 0.5) // do not override occupied
+        voxelgrid[addr] = -1.0; // empty
     }
   }
 

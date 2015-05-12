@@ -1,9 +1,10 @@
 <launch>
-  <node name="kinect2_bridge" pkg="kinect2_bridge" type="kinect2_bridge" respawn="false" output="screen"/>
+  <include file="$(find kinect2_bridge)/launch/kinect2_bridge.launch" />
   
   <node pkg="kinfu" type="kinfu" name="kinect_kinfu1" output="screen">
-    <param name="prefix_topic" value="/kinect2_head" />
-    <param name="depth_image_topic" value="/kinect2_head/depth/image" />
+    <param name="prefix_topic" value="/kinect2" />
+    <param name="camera_info_topic" value="/kinect2/depth_rect/camera_info" />
+    <param name="depth_image_topic" value="/kinect2/depth_rect/image" />
     <param name="autostart" value="true" />
     <param name="response_topic" value="/kinfu1_response_topic" />
     <param name="request_topic" value="/kinfu1_request_topic" />

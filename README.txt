@@ -38,16 +38,22 @@ Parameters and their default values are listed in "kinfu/src/parameters.h".
 
 -- KINFU_OUTPUT --
 
-Due to intereferences between the modified PCL and the ROS official one, packages such as pcl_conversions couldn't be added as dependencies of the kinfu package. This means that the kinfu package will not publish the world model as a ROS-compatible sensor_msgs/PointCloud2 message. Instead, it will use custom messages as defined by the package kinfu_msgs.
+Due to interferences between the modified PCL and the ROS official one, packages as pcl_conversions couldn't be added as dependencies of the kinfu package. This means that the kinfu package will not publish the world model as a ROS-compatible sensor_msgs/PointCloud2 message. Instead, it will use custom messages as defined by the package kinfu_msgs.
 
-The kinfu_output package is an utility that:
-- receives those messages
-- converts them into a ROS-compatible suitable message
-- publishes them to a topic as specified by the request_source_name field in the tsdf_header.
+The kinfu_output package is an utility that converts those custom messages into a ROS-compatible suitable format.
 
-Unfortunately, since ROS is unable to guarantee the delivery of a message sent by a just-created publisher, the message is published TWICE, with overhead since these are usually huge messages.
+The kinfu_output node offers two interfaces:
+* message-based interface *
+Requests are sent directly to the kinfu node. 
+kinfu_output receives its responses, converts them into a ROS-compatible format, and publishes them to a topic as specified by the request_source_name field in the tsdf_header.
+NOTE: Since ROS is unable to guarantee the delivery of a message sent by a just-created publisher, kinfu_output creates a latched publisher and keeps it alive until a subscriber is detected on the topic. If no subscriber is detected, the publisher is discarded after 30 seconds.
 
-An alternative solution was developed using actionlib, where the request is sent to the kinfu_output node inside an action (by default, "/kinfu_output/actions/request"). The node then forwards it to the kinfu node and, when a response is available, send it as the result of the action. Multiple actions may be active at the same time. See kinfu_msgs/action/Request.action.
+* action-based interface *
+This interface wraps the request/response mechanism of kinfu in an action (actionlib).
+The kinfu_output node creates an action server (by default, /kinfu_output/actions/request).
+Requests are sent to kinfu_output with an action call. kinfu_output forwards them to the kinfu node. When kinfu_output receives a response, it is wrapped in an action result and sent back to the caller.
+Multiple actions may be active at the same time and are executed concurrently.
+See kinfu_msgs/action/Request.action.
 
 -- KINFU_TF_FEEDER --
 

@@ -55,7 +55,9 @@
 typedef unsigned int uint;
 
 #define LOOP_RATE 10
-#define TIMEOUT (60 * LOOP_RATE) // after TIMEOUT cycles, the messages will be discarded.
+#define TIMEOUT (30 * LOOP_RATE) // after TIMEOUT cycles, the messages will be discarded.
+#define CONNECTED_TIMEOUT (1 * LOOP_RATE)
+  // if a node is connected for CONNECTED_TIMEOUT cycles, the message is considered sent
 
 class IQueuedResponse
 {
@@ -71,11 +73,12 @@ class TQueuedResponse
   public:
   TQueuedResponse(ros::NodeHandle & nh,std::string output_topic)
   {
-    m_sent = false;
-    m_prepare = 0;
-    m_pub = nh.advertise<MT>(output_topic,1);
-    m_cycle_count = 0;
+    m_pub = nh.advertise<MT>(output_topic,1,true);
     m_topic_name = output_topic;
+    m_sent = false;
+    m_connected = false;
+    m_cycle_count = 0;
+    m_connected_cycle_count = 0;
   }
 
   virtual ~TQueuedResponse() {}
@@ -86,31 +89,37 @@ class TQueuedResponse
     if (m_sent)
       return;
 
-    if (m_cycle_count++ > TIMEOUT)
+    if (m_cycle_count == 0)
+    {
+      m_pub.publish(m_data);
+      m_cycle_count++;
+      return;
+    }
+
+    m_cycle_count++;
+
+    if (m_cycle_count > TIMEOUT)
     {
       m_sent = true;
       return; // discard the message after the timeout
     }
 
-    if (m_prepare > 0)
-      m_prepare++;
-
-    // wait until at least a subscriber is present
-    // FIXME: what if i'm recording a rosbag on this channel?
-    //   getNumSubscribers would be > 0 immediately...
-    if (m_pub.getNumSubscribers() > 0 && m_prepare == 0)
+    // FIXME: there may be more than one subscriber that must be waited for
+    if (!m_connected && m_pub.getNumSubscribers() > 0)
     {
-      m_pub.publish(m_data);
-      ROS_INFO("kinfu_output: Publishing topic %s the first time.",m_topic_name.c_str());
-      m_prepare++;
+      m_connected = true; // the receiver may disconnect immediately after receiving the message
+                          // so we save the connected status here
+      ROS_INFO("kinfu_output: Connection detected for topic %s.",m_topic_name.c_str());
     }
 
-    // wait, then write again (sometimes the first one is ignored). FIXME
-    if (m_prepare > 2)
+    if (m_connected)
+      m_connected_cycle_count++;
+
+    if (m_connected_cycle_count > CONNECTED_TIMEOUT)
     {
-      m_pub.publish(m_data);
-      m_sent = true;
-      ROS_INFO("kinfu_output: Publishing topic %s the second time",m_topic_name.c_str());
+      m_sent = true; // probably, the node received the message
+      ROS_INFO("kinfu_output: Message to topic %s sent.",m_topic_name.c_str());
+      return;
     }
   }
 
@@ -122,8 +131,9 @@ class TQueuedResponse
   std::string m_topic_name;
 
   bool m_sent;
-  uint m_prepare;
   uint m_cycle_count;
+  bool m_connected;
+  uint m_connected_cycle_count;
 };
 
 typedef boost::shared_ptr<IQueuedResponse> PQueuedResponse;
@@ -265,6 +275,7 @@ class ResponseConverter
 {
   public:
   typedef boost::shared_ptr<pcl_msgs::PolygonMesh> MeshPtr;
+  typedef std::list<PQueuedResponse> PQueuedResponseList;
 
   ResponseConverter(ros::NodeHandle & nh): m_nh(nh), m_ramgr(nh)
   {
@@ -338,23 +349,17 @@ class ResponseConverter
   void update()
   {
     // update all the queue elements
-    for (std::list<PQueuedResponse>::iterator iter = m_queue.begin(); iter != m_queue.end(); iter++)
+    for (PQueuedResponseList::iterator iter = m_queue.begin(); iter != m_queue.end(); iter++)
       (*iter)->Update();
 
     // erase the ended elements
-    bool erased;
-    do
+    for (PQueuedResponseList::iterator iter = m_queue.begin(); iter != m_queue.end(); )
     {
-      erased = false;
-      for (std::list<PQueuedResponse>::iterator iter = m_queue.begin(); iter != m_queue.end(); iter++)
-        if ((*iter)->IsEnded())
-        {
-          m_queue.erase(iter);
-          erased = true;
-          break;
-        }
+      PQueuedResponseList::iterator td = iter;
+      ++iter;
+      if ((*td)->IsEnded())
+        m_queue.erase(td);
     }
-    while (erased);
   }
 
   private:

@@ -505,7 +505,7 @@ struct KinFuLSApp
       hasrequests = m_world_download_manager.hasRequests();
 
       std::string istriggered_command_id;
-      if (istriggered = m_command_subscriber.isTriggered())
+      if ((istriggered = m_command_subscriber.isTriggered()))
         {
         istriggered_command_id = m_command_subscriber.getIsTriggeredCommandId();
         m_command_subscriber.clearTriggered();
@@ -557,8 +557,22 @@ struct KinFuLSApp
       clear_bbox = m_command_subscriber.getClearBBox();
       m_command_subscriber.clearClearBBox();
 
-      // Computational heavy tasks follow. Unlock the mutex, so it can run along the main thread.
+      // The information from ROS was copied, this may run along the main thread.
       main_lock.unlock();
+
+      if (reset)
+      {
+        kinfu_->reset();
+        m_command_subscriber.ack(reset_command_id,true);
+        ROS_INFO("KinFu was reset.");
+      }
+
+      if (hasimage && (isrunning || istriggered))
+        {
+        execute(depth,cameraInfo,rgb,pose_hint);
+        if (istriggered)
+          m_command_subscriber.ack(istriggered_command_id,true);
+        }
 
       if ((clear_sphere || clear_bbox || hasrequests) && !kinfu_->isShiftComplete())
       {
@@ -585,20 +599,6 @@ struct KinFuLSApp
         ROS_INFO("KinFu cleared bbox.");
         m_command_subscriber.ack(clear_bbox->command_id,true);
       }
-
-      if (reset)
-      {
-        kinfu_->reset();
-        m_command_subscriber.ack(reset_command_id,true);
-        ROS_INFO("KinFu was reset.");
-      }
-
-      if (hasimage && (isrunning || istriggered))
-        {
-        execute(depth,cameraInfo,rgb,pose_hint);
-        if (istriggered)
-          m_command_subscriber.ack(istriggered_command_id,true);
-        }
 
       if (hasrequests)
         m_world_download_manager.respond(kinfu_);

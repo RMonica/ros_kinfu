@@ -68,6 +68,8 @@ bool RequestActionManager::HandleResponse(const kinfu_msgs::KinfuTsdfResponse & 
         }
       break;
       }
+
+  return true;
   }
 
 void RequestActionManager::Update()

@@ -106,7 +106,7 @@ class CommandSubscriber
   bool isRunning() const {return m_is_running; }
 
   bool isTriggered() const {return m_is_triggered; }
-  bool clearTriggered() {m_is_triggered = false; }
+  void clearTriggered() {m_is_triggered = false; }
   const std::string & getIsTriggeredCommandId() const {return m_is_triggered_command_id; }
 
   void setInitialTransformation(Eigen::Affine3f initial) {m_initial_transformation = initial; }

@@ -3,11 +3,11 @@
   
   <node pkg="kinfu" type="kinfu" name="kinect_kinfu1" output="screen">
     <param name="prefix_topic" value="/kinect2" />
-    <param name="camera_info_topic" value="/kinect2/depth_rect/camera_info" />
-    <param name="depth_image_topic" value="/kinect2/depth_rect/image" />
+    <param name="camera_info_topic" value="/kinect2/sd/camera_info" />
+    <param name="depth_image_topic" value="/kinect2/sd/image_depth_rect" />
     <param name="autostart" value="true" />
-    <param name="response_topic" value="/kinfu1_response_topic" />
-    <param name="request_topic" value="/kinfu1_request_topic" />
+    <param name="response_topic" value="/kinfu_response_topic" />
+    <param name="request_topic" value="/kinfu_request_topic" />
     <param name="extract_known_points" value="false" />
 
     <param name="depth_height" type="int" value="424" />
@@ -15,6 +15,6 @@
   </node>
 
   <node pkg="kinfu_output" type="kinfu_output" name="kinect_kinfu1_output" output="screen">
-    <param name="kinfu_response_topic" value="/kinfu1_response_topic" />
+    <param name="kinfu_response_topic" value="/kinfu_response_topic" />
   </node>
 </launch>

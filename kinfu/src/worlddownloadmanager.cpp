@@ -107,28 +107,28 @@ void WorldDownloadManager::requestCallback(kinfu_msgs::KinfuTsdfRequestConstPtr 
 void WorldDownloadManager::requestWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req,
   std::list<boost::thread *>::iterator thread_iterator)
 {
-  if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_PING)
+  if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_PING))
     pingWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_TSDF)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_TSDF))
     extractTsdfWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_MESH)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_MESH))
     extractMeshWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_CLOUD)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_CLOUD))
     extractCloudWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_KNOWN)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_KNOWN))
     extractKnownWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_VIEW)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VIEW))
     extractViewWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_VIEW_CLOUD)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VIEW_CLOUD))
     extractViewCloudWorker(req);
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_VOXEL_COUNT)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VOXEL_COUNT))
   {
     if (!req->request_view_poses)
       extractVoxelCountGenericWorker(req);
     else
       extractVoxelCountViewsWorker(req);
   }
-  else if (req->tsdf_header.request_type == req->tsdf_header.REQUEST_TYPE_GET_VOXELGRID)
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VOXELGRID))
     extractVoxelGridWorker(req);
   else
   {

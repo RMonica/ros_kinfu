@@ -108,7 +108,7 @@ index 1828378..e261313 100644
 +                int z_step = buffer.voxels_size.y * volume.step / sizeof(*pos);
 +
 +                ///Get the size of the whole TSDF memory
-+                int size = buffer.tsdf_memory_end - buffer.tsdf_memory_start;
++                int size = buffer.tsdf_memory_end - buffer.tsdf_memory_start + 1;
 +
 +                short * ks = known_status.ptr(y) + x;
 +                short * max_ks = known_status.ptr(0) + buffer.voxels_size.x*buffer.voxels_size.y*buffer.voxels_size.z;
@@ -146,7 +146,7 @@ index 1828378..e261313 100644
 +                int z_step = buffer.voxels_size.y * volume.step / sizeof(*pos);
 +
 +                ///Get the size of the whole TSDF memory
-+                int size = buffer.tsdf_memory_end - buffer.tsdf_memory_start;
++                int size = buffer.tsdf_memory_end - buffer.tsdf_memory_start + 1;
 +
 +                short * ks = known_status.ptr(y) + x;
 +                short * max_ks = known_status.ptr(0) + buffer.voxels_size.x*buffer.voxels_size.y*buffer.voxels_size.z;

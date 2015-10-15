@@ -322,7 +322,7 @@ void WorldDownloadManager::initRaycaster(bool has_intrinsics,const kinfu_msgs::K
   else
     m_kinfu->getDepthIntrinsics(fx,fy,cx,cy);
 
-  if (!m_raycaster || (m_raycaster->rows != rows) || (m_raycaster->cols != cols))
+  if (!m_raycaster || (uint(m_raycaster->rows) != rows) || (uint(m_raycaster->cols) != cols))
   {
     ROS_INFO("kinfu: initializing raycaster...");
     m_raycaster = RayCaster::Ptr(new RayCaster(rows,cols));

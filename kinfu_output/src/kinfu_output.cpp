@@ -104,7 +104,7 @@ class TQueuedResponse
       return; // discard the message after the timeout
     }
 
-    // FIXME: there may be more than one subscriber that must be waited for
+    // FIXME: we may have to wait for more than one subscriber
     if (!m_connected && m_pub.getNumSubscribers() > 0)
     {
       m_connected = true; // the receiver may disconnect immediately after receiving the message
@@ -236,6 +236,22 @@ class TQueuedIntensityCloudResponse: public TQueuedResponse<sensor_msgs::PointCl
   bool IsEnded() {return TQueuedResponse<sensor_msgs::PointCloud2>::_IsEnded(); }
 };
 
+class TQueuedXYZNormalCloudResponse: public TQueuedResponse<sensor_msgs::PointCloud2>,
+  public IQueuedResponse
+{
+  public:
+  TQueuedXYZNormalCloudResponse(ros::NodeHandle & nh,
+    const kinfu_msgs::KinfuTsdfResponse & resp):
+    TQueuedResponse(nh,resp.tsdf_header.request_source_name)
+  {
+    ConvertXYZNormalCloudToPointCloud2(resp,m_data);
+  }
+
+  // solve multi-inheritance conflict
+  void Update() {TQueuedResponse<sensor_msgs::PointCloud2>::_Update(); }
+  bool IsEnded() {return TQueuedResponse<sensor_msgs::PointCloud2>::_IsEnded(); }
+};
+
 class TQueuedUintArrayResponse: public TQueuedResponse<std_msgs::UInt64MultiArray>,
   public IQueuedResponse
 {
@@ -291,10 +307,12 @@ class ResponseConverter
     const uint pixels = response.image.height * response.image.width;
     const uint uint64_values = response.uint_values.size();
     const uint float32_values = response.float_values.size();
+    const uint normals_size = response.normal_cloud.size();
 
     ROS_INFO("kinfu_output: \nReceived response with\n    %u tsdf points\n"
-      "    %u point cloud points\n    %u triangles\n    %u pixels\n    %u uint64 values\n    %u float32 values\n",
-      tsdf_size,cloud_size,triangles_size,pixels,uint64_values,float32_values);
+      "    %u point cloud points\n    %u triangles\n    %u pixels\n    %u uint64 values\n    %u float32 values\n"
+      "    %u normals\n",
+      tsdf_size,cloud_size,triangles_size,pixels,uint64_values,float32_values,normals_size);
 
     if (m_ramgr.HandleResponse(response))
       return; // handled by the action manager
@@ -340,6 +358,14 @@ class ResponseConverter
     else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VOXELGRID)
     {
       m_queue.push_back(PQueuedResponse(new TQueuedGridResponse(m_nh,response)));
+    }
+    else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_FRONTIER_POINTS)
+    {
+      m_queue.push_back(PQueuedResponse(new TQueuedXYZNormalCloudResponse(m_nh,response)));
+    }
+    else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS)
+    {
+      m_queue.push_back(PQueuedResponse(new TQueuedXYZNormalCloudResponse(m_nh,response)));
     }
     else
       ROS_ERROR("kinfu_output: received unknown response type %u.",uint(response.tsdf_header.request_type));

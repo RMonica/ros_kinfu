@@ -56,10 +56,12 @@
 
 // Eigen
 #include <Eigen/Dense>
+#include <Eigen/StdVector>
 
 // Custom
 #include "parameters.h"
 #include "weightcubelistener.h"
+#include "incompletepointslistener.h"
 
 // ROS custom messages
 #include <kinfu_msgs/KinfuTsdfResponse.h>
@@ -75,11 +77,13 @@ class WorldDownloadManager
   typedef uint64_t uint64;
   typedef pcl::PolygonMesh Mesh;
   typedef pcl::PointCloud<pcl::PointXYZI> TsdfCloud;
-  typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
+  typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
+  typedef pcl::PointCloud<pcl::PointNormal> PointCloudXYZNormal;
   typedef std::vector<kinfu_msgs::KinfuMeshTriangle> Triangles;
   typedef boost::shared_ptr<Triangles> TrianglesPtr;
   typedef boost::shared_ptr<const Triangles> TrianglesConstPtr;
   typedef pcl::gpu::kinfuLS::RayCaster RayCaster;
+  typedef std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> > Vector3fVector;
 
   WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex &shared_mutex,boost::condition_variable & cond);
 
@@ -95,6 +99,8 @@ class WorldDownloadManager
   void setReferenceFrameName(std::string n) {m_reference_frame_name = n; }
 
   TWeightCubeListener::Ptr getWeightCubeListener() {return m_cube_listener; }
+
+  TIncompletePointsListener::Ptr getIncompletePointsListener() {return m_incomplete_points_listener; }
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 
@@ -116,10 +122,16 @@ class WorldDownloadManager
   static void fromTsdfToMessage(const TsdfCloud & in, kinfu_msgs::KinfuTsdfResponse::Ptr &resp);
 
   void extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
-  static void separateMesh(Mesh::ConstPtr mesh,PointCloud::Ptr points,
+  void extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdfRequestConstPtr req,
+    kinfu_msgs::KinfuTsdfResponsePtr resp,TsdfCloud::Ptr tsdf_cloud);
+
+  template <class PointT>
+  static void separateMesh(Mesh::ConstPtr mesh,typename pcl::PointCloud<PointT>::Ptr points,
     TrianglesPtr triangles = TrianglesPtr());
-  static void mergePointCloudsAndMesh(std::vector<PointCloud::Ptr> &pointclouds,
-    PointCloud::Ptr out_cloud, std::vector<TrianglesPtr> *meshes = NULL, Triangles *out_mesh = NULL);
+
+  template <class PointT>
+  static void mergePointCloudsAndMesh(std::vector<typename pcl::PointCloud<PointT>::Ptr> &pointclouds,
+    typename pcl::PointCloud<PointT>::Ptr out_cloud, std::vector<TrianglesPtr> *meshes = NULL, Triangles *out_mesh = NULL);
 
   void extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
 
@@ -134,8 +146,9 @@ class WorldDownloadManager
 
   void extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
 
-  bool marchingCubes(
-    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud,std::vector<Mesh::Ptr> & output_meshes) const;
+  void extractBorderPointsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
+
+  bool marchingCubes(pcl::PointCloud<pcl::PointXYZI>::Ptr cloud, std::vector<Mesh::Ptr> & output_meshes) const;
 
   // returns false on error
   bool lockKinfu();
@@ -147,11 +160,29 @@ class WorldDownloadManager
   void initRaycaster(bool has_intrinsics,const kinfu_msgs::KinfuCameraIntrinsics & intr,
     bool has_bounding_box_view,const kinfu_msgs::KinfuCloudPoint & bbox_min,const kinfu_msgs::KinfuCloudPoint & bbox_max);
 
+  template <class PointT>
   static void cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
-    const kinfu_msgs::KinfuCloudPoint & max,PointCloud::ConstPtr cloud,
-    TrianglesConstPtr triangles,PointCloud::Ptr out_cloud,TrianglesPtr out_triangles);
+    const kinfu_msgs::KinfuCloudPoint & max,typename pcl::PointCloud<PointT>::ConstPtr cloud,
+    TrianglesConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TrianglesPtr out_triangles);
 
-  static void pclPointCloudToMessage(PointCloud::Ptr pcl_cloud,std::vector<kinfu_msgs::KinfuCloudPoint> & message);
+  template <class PointT>
+  static void removeDuplicatePoints(typename pcl::PointCloud<PointT>::ConstPtr cloud,
+    TrianglesConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TrianglesPtr out_triangles);
+
+  template <class PointT>
+  static void cropCloud(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
+    typename pcl::PointCloud<PointT>::ConstPtr cloud,typename pcl::PointCloud<PointT>::Ptr out_cloud);
+
+  template <class PointT>
+  static void cropCloudWithSphere(const Eigen::Vector3f & sphere_center,const float sphere_radius,
+    typename pcl::PointCloud<PointT>::ConstPtr cloud,typename pcl::PointCloud<PointT>::Ptr out_cloud);
+
+  static void pclPointCloudToMessage(PointCloudXYZ::Ptr pcl_cloud,std::vector<kinfu_msgs::KinfuCloudPoint> & message);
+
+  static void pclXYZNormalCloudToMessage(PointCloudXYZNormal::Ptr pcl_cloud,
+                                         std::vector<kinfu_msgs::KinfuCloudPoint>& message_cloud,
+                                         std::vector<kinfu_msgs::KinfuCloudPoint>& message_normals,
+                                         std::vector<float> &message_curvatures);
 
   // many kinds of array and vectors may be used here
   // (the main reason being that ROS uses std::vector
@@ -160,6 +191,14 @@ class WorldDownloadManager
     static Eigen::Affine3f toEigenAffine(const T1 & linear,const T2 & translation);
 
   static Eigen::Affine3f toEigenAffine(const kinfu_msgs::KinfuPose & pose);
+
+  // transforms the bounding box, and generates a bigger axis oriented bounding box, if needed
+  static void transformBoundingBoxAndExpand(const Eigen::Vector3f& bbox_min,const Eigen::Vector3f& bbox_max,
+    const Eigen::Affine3f& transform,Eigen::Vector3f& bbox_min_out,Eigen::Vector3f& bbox_max_out);
+
+  static void findExtraCubesForBoundingBox(const Eigen::Vector3f& current_cube_min, const Eigen::Vector3f& current_cube_max,
+    const Eigen::Vector3f& bbox_min, const Eigen::Vector3f& bbox_max, Vector3fVector& cubes_centers, bool& extract_current);
+  static Eigen::Vector3f floor3f(const Eigen::Vector3f & v);
 
   ros::Subscriber m_subReq;
   std::string m_req_topic_name;
@@ -193,6 +232,8 @@ class WorldDownloadManager
   Eigen::Affine3f m_reverse_initial_transformation;
 
   TWeightCubeListener::Ptr m_cube_listener;
+
+  TIncompletePointsListener::Ptr m_incomplete_points_listener;
 
   std::string m_reference_frame_name;
 };

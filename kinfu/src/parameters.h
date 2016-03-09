@@ -94,6 +94,12 @@
 #define PARAM_NAME_EXTRACT_KNOWN_POINTS    "extract_known_points"
 #define PARAM_DEFAULT_EXTRACT_KNOWN_POINTS (bool(false))
 
+#define PARAM_NAME_EXTRACT_BORDER_POINTS    "extract_incomplete_border_points"
+#define PARAM_DEFAULT_EXTRACT_BORDER_POINTS (bool(false))
+
+#define PARAM_NAME_EXTRACT_FRONTIER_POINTS    "extract_incomplete_frontier_points"
+#define PARAM_DEFAULT_EXTRACT_FRONTIER_POINTS (bool(false))
+
 #define PARAM_NAME_ENABLE_MIN_MOTION      "enable_minimum_motion"
 #define PARAM_DEFAULT_ENABLE_MIN_MOTION   (bool(true))
 

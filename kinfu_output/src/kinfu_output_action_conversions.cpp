@@ -62,22 +62,51 @@ void ConvertTsdfToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_
 void ConvertCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data)
   {
   uint cloud_size = resp.point_cloud.size();
-  pcl::PointCloud<pcl::PointXYZ> pointcloud;
 
-  pointcloud.reserve(cloud_size);
-  for (uint i = 0; i < cloud_size; i++)
+  if (resp.normal_cloud.size() != resp.point_cloud.size())
     {
-    pcl::PointXYZ p;
-    const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
+    pcl::PointCloud<pcl::PointXYZ> pointcloud;
 
-    p.x = tp.x;
-    p.y = tp.y;
-    p.z = tp.z;
+    pointcloud.reserve(cloud_size);
+    for (uint i = 0; i < cloud_size; i++)
+      {
+      pcl::PointXYZ p;
+      const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
 
-    pointcloud.push_back(p);
+      p.x = tp.x;
+      p.y = tp.y;
+      p.z = tp.z;
+
+      pointcloud.push_back(p);
+      }
+
+    pcl::toROSMsg(pointcloud,data);
     }
+    else
+    {
+    pcl::PointCloud<pcl::PointNormal> pointcloud;
 
-  pcl::toROSMsg(pointcloud,data);
+    pointcloud.reserve(cloud_size);
+    for (uint i = 0; i < cloud_size; i++)
+      {
+      pcl::PointNormal p;
+      const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
+      const kinfu_msgs::KinfuCloudPoint & np = resp.normal_cloud[i];
+      const float curvature = (resp.curvature_cloud.size() > i) ? resp.curvature_cloud[i] : 0.0;
+
+      p.x = tp.x;
+      p.y = tp.y;
+      p.z = tp.z;
+      p.normal_x = np.x;
+      p.normal_y = np.y;
+      p.normal_z = np.z;
+      p.curvature = curvature;
+
+      pointcloud.push_back(p);
+      }
+
+    pcl::toROSMsg(pointcloud,data);
+    }
 
   data.header.seq = resp.tsdf_header.request_id;
   data.header.stamp = ros::Time::now();
@@ -88,22 +117,41 @@ void ConvertMeshToMeshMsg(const kinfu_msgs::KinfuTsdfResponse & resp, pcl_msgs::
   {
   uint points_size = resp.point_cloud.size();
   uint triangles_size = resp.triangles.size();
-  pcl::PointCloud<pcl::PointXYZ> pointcloud;
+  pcl::PointCloud<pcl::PointNormal> pointcloud;
+
+  const bool has_normals = (resp.normal_cloud.size() == points_size) && (resp.curvature_cloud.size() == points_size);
 
   pointcloud.reserve(points_size);
   for (uint i = 0; i < points_size; i++)
     {
-    pcl::PointXYZ p;
+    pcl::PointNormal p;
     const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
 
     p.x = tp.x;
     p.y = tp.y;
-      p.z = tp.z;
+    p.z = tp.z;
+
+    if (has_normals)
+      {
+      p.normal_x = resp.normal_cloud[i].x;
+      p.normal_y = resp.normal_cloud[i].y;
+      p.normal_z = resp.normal_cloud[i].z;
+      p.curvature = resp.curvature_cloud[i];
+      }
 
     pointcloud.push_back(p);
     }
 
-  pcl::toROSMsg(pointcloud,data.cloud);
+  if (has_normals)
+  {
+    pcl::toROSMsg(pointcloud,data.cloud);
+  }
+  else
+  {
+    pcl::PointCloud<pcl::PointXYZ> pointcloudnonormal;
+    pcl::copyPointCloud(pointcloud,pointcloudnonormal);
+    pcl::toROSMsg(pointcloudnonormal,data.cloud);
+  }
 
   data.polygons.reserve(triangles_size);
   for (uint i = 0; i < triangles_size; i++)
@@ -138,6 +186,45 @@ void ConvertIntensityCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & re
     p.y = tp.y;
     p.z = tp.z;
     p.intensity = resp.float_values[i];
+
+    pointcloud.push_back(p);
+    }
+
+  pcl::toROSMsg(pointcloud,data);
+
+  data.header.seq = resp.tsdf_header.request_id;
+  data.header.stamp = ros::Time::now();
+  data.header.frame_id = resp.reference_frame_id;
+  }
+
+void ConvertXYZNormalCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data)
+  {
+  const uint cloud_size = resp.point_cloud.size();
+  const uint normals_size = resp.normal_cloud.size();
+  if (cloud_size != normals_size)
+  {
+    ROS_ERROR("kinfu_output: size of point_cloud (%u) must be equal to size of point_normals (%u).",
+      uint(cloud_size),uint(normals_size));
+    return;
+  }
+
+  pcl::PointCloud<pcl::PointNormal> pointcloud;
+
+  pointcloud.reserve(cloud_size);
+  for (uint i = 0; i < cloud_size; i++)
+    {
+    pcl::PointNormal p;
+    const kinfu_msgs::KinfuCloudPoint & tp = resp.point_cloud[i];
+    const kinfu_msgs::KinfuCloudPoint & tn = resp.normal_cloud[i];
+    const float curvature = (resp.curvature_cloud.size() > i) ? resp.curvature_cloud[i] : 0.0;
+
+    p.x = tp.x;
+    p.y = tp.y;
+    p.z = tp.z;
+    p.normal_x = tn.x;
+    p.normal_y = tn.y;
+    p.normal_z = tn.z;
+    p.curvature = curvature;
 
     pointcloud.push_back(p);
     }
@@ -251,6 +338,14 @@ void ConvertToActionResponse(const kinfu_msgs::KinfuTsdfResponse & response,kinf
   else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VOXELGRID)
     {
     ConvertGridToMsg(response,result.float_values);
+    }
+  else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_FRONTIER_POINTS)
+    {
+    ConvertXYZNormalCloudToPointCloud2(response,result.pointcloud);
+    }
+  else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS)
+    {
+    ConvertXYZNormalCloudToPointCloud2(response,result.pointcloud);
     }
   else
     ROS_ERROR("kinfu_output: unknown request type %u.",uint(response.tsdf_header.request_type));

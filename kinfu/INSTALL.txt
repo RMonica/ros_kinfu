@@ -1,101 +1,10 @@
-2013 11 05
+2015 12 02
 
-This ROS node depends upon a version of the Point Cloud Library (PCL) built from source. The reason is that the KinFu (open source Kinect Fusion) is currently unreleased on most distributions of the PCL, so has been for over two years and will probably be that way in the future.
+== INSTALLATION ==
 
-A main problem is that, even if it is theoretically possible to divide the PCL from the ROS, a complete separation is impossible in practice.
-The version of PCL included in ROS is partially modified, in particular regarding to the conversion functions between the PointCloud type and PointCloud2 type, and the latter type itself, that has been converted into a ROS message.
-This is why the "pcl" ROS package is not among the dependencies of the "kinfu" package, to avoid header conflicts. Even then, some PCL header are included by ROS forcefully (see the directory /opt/ros/[release]/include/pcl), so those conflicts are unavoidable. A partial and temporary solution has been found by placing the PCL research commands in the CMakeLists.txt BEFORE the first ROS command, thus making g++ search the PCL folders first.
-Many other problems are likely to appear in the future and the solution is left to the wits of the hero who takes on the challenge of compiling this node.
+Since PCL does not support KinFu any more, the source code of KinFu was just copy-pasted in the pcl_kinfu_large_scale folder.
+This node now compiles like a common ROS node, except that:
+  - You need a working CUDA installation
+  - You need to rename the file cmake/KinfuTrigger.cmake.readme to KinfuTrigger.cmake
 
--- DEPENDENCIES --
-- ROS
-- Eigen 3
-- CUDA >= 4.0
-- VTK (Visualization ToolKit) library
-- git (version control)
-- cmake and ccmake
-- boost
-- FLANN
-- OpenNI
-
-Note: make sure your CUDA installation is really working, otherwise you may not notice malfunctions until the end of the installation process.
-
-The package has been tested only with Ubuntu 12.04, PCL 1.7 and ROS groovy.
-
--- DIRECTORY STRUCTURE --
-To install this node, you will need to create 3 new folders: one for the node itself, one for the PCL source and one for the PCL installation. The following instructions will assume you have a directory structure like:
-
-- /home/my_home
-  |- ros_workspace
-  |  \- kinfu     (this node)
-  \- pcl
-     |- source    (pcl source)
-     \- install   (pcl installation)
-
-If you want to use another directory structure, change the commands accordingly.
-
--- PCL SOURCE DOWNLOAD --
-You have to download the PCL source from the GIT repository to the source directory. 
-As of today (nov 5, 2013), the source code may be downloaded by cloning the github repository at https://github.com/PointCloudLibrary/pcl . From the /home/my_home/pcl folder, you may use the command:
-
-  git clone https://github.com/PointCloudLibrary/pcl.git source
-
-to create the source subfolder and copy the source there. Refer to the github and git documentation if you are having problems and/or want to know what that command does.
-
-Then, you have to apply all the patches that allow the PCL to work with this node. The patches are found in the "patches" subfolder, relative to the kinfu package root. To apply a patch, from the /home/my_home/pcl/source folder, write:
-
-  git apply /home/my_home/ros_workspace/kinfu/patches/name.patch
-
-Each patch name starts with a number. The patches must be applied in ascending order by that number.
-
-The patches may fail or corrupt the code, depending on the amount of modification that happened to the PCL trunk in the time between the creation of the patches and their application. In such cases, the aforementioned hero will have to solve the problem himself.
-
--- COMPILE THE PCL --
-To compile the PCL, you have to follow roughly the instruction in the webpage:
-
-  http://pointclouds.org/downloads/source.html
-
-but you have to enable the "cuda" and "gpu" targets in the CMakeFiles. In addition, set the install prefix to the PCL install folder. In short:
- 1) Create the directory /home/my_home/pcl/source/build
- 2) From there, execute:
-    ccmake ..
- 3) Configure (c) once or twice, until the options show up. The configuration may fail: then exit, check the dependencies and repeat.
- 4) Change the options:
-  BUILD_GPU to ON
-  CMAKE_INSTALL_PREFIX to /home/my_home/pcl/install
-  Note: to see all the options, you may need to toggle advanced mode (t).
- 5) Exit ccmake (q).
- 6) Issue the command:
-    cmake ..
- 7) At this point, a list of targets to be built will be shown. Check the presence among them of something like "kinfu" and "kinfu_large_scale". If they are not here (or are in the "will not build" list) even if you did enable them, you have problems with the dependencies. Solve them and restart from step 1. Yes, you have to DELETE THE BUILD DIRECTORY and start over. Simply re-running cmake may not work.
- 8) Compile with the command:
-    make
-    and solve all the problems that may arise. Errors in CUDA files usually mean that your CUDA installation is not really installed or detected.
- 9) Install with:
-    make install
-    and check that the directory /home/my_home/pcl/install now contains the installed PCL.
-
--- COMPILE THE KINFU NODE --
-Before compiling the "kinfu" node, you must change the CMakeLists.txt so that it points to your custom installation of the PCL. Conveniently, all the options to change have been transferred to the file "/home/my_home/ros_workspace/kinfu/cmake/CustomPCLConfig.cmake". That file does not exists, but you can obtain it by copying the nearby CustomPCLConfig.cmake.example. Open it with a text editor and set:
-
-PCL_DIR to "/home/my_home/pcl/install/share/pcl-M.m"
-where "M.m" stands for the major and minor version of the library (e.g. "1.7" for PCL 1.7).
-
-Then, you can compile the node using catkin_make (or, even better, catkin_make_isolated). If everything went right at this point, the compilation should fail, stating that it could not find some header files. This is beacuse some of the required .h and .hpp headers are not installed by the PCL installation script, from directories
-  
-  /home/my_home/pcl/source/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale
-  /home/my_home/pcl/source/gpu/kinfu_large_scale/src
-  /home/my_home/pcl/source/gpu/kinfu_large_scale/include/pcl/gpu/kinfu_large_scale/impl
-
-to directories
-
-  /home/my_home/pcl/install/include/pcl-M.m/pcl/gpu/kinfu_large_scale
-  /home/my_home/pcl/install/include/pcl-M.m/pcl/gpu/kinfu_large_scale/impl
-
-Copy them one by one and attempt to compile again until the compilation succeeds.
-
-During the process, some conflicts in function prototypes may happen. This is not usually caused by a corrupt PCL installation, but by some ROS-PCL headers that have been used in absence of the correct one in your installation directory.
-
-2015 03 11
-
-Riccardo Monica
+2015 12 02

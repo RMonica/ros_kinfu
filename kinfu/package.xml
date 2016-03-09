@@ -10,6 +10,7 @@
 
   <buildtool_depend>catkin</buildtool_depend>
   <build_depend>geometry_msgs</build_depend>
+  <build_depend>cmake_modules</build_depend>
   <build_depend>image_transport</build_depend>
   <build_depend>kinfu_msgs</build_depend>
   <build_depend>message_filters</build_depend>

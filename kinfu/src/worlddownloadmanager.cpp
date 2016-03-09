@@ -30,7 +30,6 @@
 
 #include "worlddownloadmanager.h"
 
-#include <pcl/gpu/kinfu_large_scale/internal.h>
 #include <pcl/gpu/kinfu_large_scale/standalone_marching_cubes.h>
 #include <pcl/gpu/kinfu_large_scale/impl/standalone_marching_cubes.hpp>
 #include <kinfu/bitmaskoctree.h>
@@ -54,6 +53,7 @@ WorldDownloadManager::WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex
   m_is_shutting_down = false;
 
   m_cube_listener = TWeightCubeListener::Ptr(new TWeightCubeListener);
+  m_incomplete_points_listener = TIncompletePointsListener::Ptr(new TIncompletePointsListener);
 
   m_reverse_initial_transformation = Eigen::Affine3f::Identity();
 }
@@ -104,6 +104,30 @@ void WorldDownloadManager::requestCallback(kinfu_msgs::KinfuTsdfRequestConstPtr 
   }
 }
 
+// this must be called by the kinfu thread
+void WorldDownloadManager::respond(KinfuTracker * kinfu)
+{
+  boost::mutex::scoped_lock wlock(m_kinfu_waiting_mutex);
+  if (m_kinfu_waiting_count == 0)
+    return; // nothing to do
+
+  m_kinfu = kinfu;
+
+  m_kinfu_available = true;
+  m_kinfu_waiting_cond.notify_one();
+
+  while (m_kinfu_waiting_count > 0)
+    m_kinfu_waiting_cond.wait(wlock);
+
+  m_kinfu_available = false;
+}
+
+bool WorldDownloadManager::hasRequests()
+{
+  boost::mutex::scoped_lock wlock(m_kinfu_waiting_mutex);
+  return m_kinfu_waiting_count > 0;
+}
+
 void WorldDownloadManager::requestWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req,
   std::list<boost::thread *>::iterator thread_iterator)
 {
@@ -130,6 +154,9 @@ void WorldDownloadManager::requestWorker(kinfu_msgs::KinfuTsdfRequestConstPtr re
   }
   else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VOXELGRID))
     extractVoxelGridWorker(req);
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_FRONTIER_POINTS) ||
+    uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS))
+    extractBorderPointsWorker(req);
   else
   {
     ROS_ERROR("Request type %u (id: %u) is unknown.",
@@ -203,57 +230,6 @@ void WorldDownloadManager::extractTsdfWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   ROS_INFO("kinfu: Extract Tsdf Worker complete.");
 }
 
-void WorldDownloadManager::cropTsdfCloud(const TsdfCloud & cloud_in,TsdfCloud & cloud_out,
-  const kinfu_msgs::KinfuCloudPoint & min,const kinfu_msgs::KinfuCloudPoint & max)
-{
-  cloud_out.clear();
-
-  uint in_size = cloud_in.size();
-
-  cloud_out.points.reserve(in_size);
-
-  for (uint i = 0; i < in_size; i++)
-  {
-    const pcl::PointXYZI & s = cloud_in[i];
-
-    if (s.x > max.x || s.y > max.y || s.z > max.z ||
-      s.x < min.x || s.y < min.y || s.z < min.z)
-      continue;
-
-    pcl::PointXYZI d;
-
-    d.x = s.x;
-    d.y = s.y;
-    d.z = s.z;
-    d.intensity = s.intensity;
-
-    cloud_out.push_back(d);
-  }
-}
-
-void WorldDownloadManager::fromTsdfToMessage(const TsdfCloud & in,kinfu_msgs::KinfuTsdfResponse::Ptr & resp)
-{
-  resp->tsdf_cloud.clear();
-
-  uint in_size = in.size();
-
-  resp->tsdf_cloud.reserve(in_size);
-
-  for (uint i = 0; i < in_size; i++)
-  {
-    const pcl::PointXYZI & s = in[i];
-
-    kinfu_msgs::KinfuTsdfPoint d;
-
-    d.x = s.x;
-    d.y = s.y;
-    d.z = s.z;
-    d.i = s.intensity;
-
-    resp->tsdf_cloud.push_back(d);
-  }
-}
-
 void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
   ROS_INFO("kinfu: Extract Cloud Worker started.");
@@ -269,11 +245,21 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
 
   ROS_INFO("kinfu: Locked.");
 
-  pcl::PointCloud<pcl::PointXYZI>::Ptr kinfu_cloud = req->request_reset ?
+  TsdfCloud::Ptr kinfu_cloud = req->request_reset ?
     m_kinfu->extractWorldAndReset() : m_kinfu->extractWorld();
 
   unlockKinfu();
 
+  extractCloudWorkerMCWithNormals(req,resp,kinfu_cloud);
+
+  ROS_INFO("kinfu: Publishing...");
+  m_pub.publish(resp);
+  ROS_INFO("kinfu: Extract Cloud Worker complete.");
+}
+
+void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdfRequestConstPtr req,
+    kinfu_msgs::KinfuTsdfResponsePtr resp,TsdfCloud::Ptr kinfu_cloud)
+{
   Eigen::Affine3f transformation = m_reverse_initial_transformation;
 
   std::vector<Mesh::Ptr> meshes;
@@ -284,20 +270,20 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
 
   kinfu_cloud->clear(); // save some memory
 
-  std::vector<PointCloud::Ptr> clouds;
+  std::vector<PointCloudXYZNormal::Ptr> clouds;
 
   ROS_INFO("kinfu: Extracting only points from mesh...");
   for (uint i = 0; i < meshes.size(); i++)
   {
-    clouds.push_back(PointCloud::Ptr(new PointCloud()));
-    separateMesh(meshes[i],clouds[i]);
+    clouds.push_back(PointCloudXYZNormal::Ptr(new PointCloudXYZNormal()));
+    separateMesh<pcl::PointNormal>(meshes[i],clouds[i]);
   }
   meshes.clear(); // save some memory
 
-  PointCloud::Ptr cloud(new PointCloud());
+  PointCloudXYZNormal::Ptr cloud(new PointCloudXYZNormal());
 
   ROS_INFO("kinfu: Merging points...");
-  mergePointCloudsAndMesh(clouds,cloud);
+  mergePointCloudsAndMesh<pcl::PointNormal>(clouds,cloud);
 
   // if needed, transform
   if (req->request_transformation)
@@ -314,17 +300,21 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
   if (req->request_bounding_box)
   {
     ROS_INFO("kinfu: Cropping...");
-    PointCloud::Ptr out_cloud(new PointCloud());
+    PointCloudXYZNormal::Ptr out_cloud(new PointCloudXYZNormal());
     TrianglesPtr empty(new Triangles());
-    cropMesh(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
+    cropMesh<pcl::PointNormal>(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
     cloud = out_cloud;
   }
 
-  ROS_INFO("kinfu: Publishing...");
-  pclPointCloudToMessage(cloud,resp->point_cloud);
+  if (req->request_remove_duplicates)
+  {
+    ROS_INFO("kinfu: Removing duplicate points...");
+    PointCloudXYZNormal::Ptr new_cloud(new PointCloudXYZNormal());
+    removeDuplicatePoints<pcl::PointNormal>(cloud,TrianglesConstPtr(),new_cloud,TrianglesPtr());
+    cloud = new_cloud;
+  }
 
-  m_pub.publish(resp);
-  ROS_INFO("kinfu: Extract Cloud Worker complete.");
+  pclXYZNormalCloudToMessage(cloud,resp->point_cloud,resp->normal_cloud,resp->curvature_cloud);
 }
 
 void WorldDownloadManager::extractKnownWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
@@ -376,9 +366,9 @@ void WorldDownloadManager::extractKnownWorker(kinfu_msgs::KinfuTsdfRequestConstP
   if (req->request_bounding_box)
   {
     ROS_INFO("kinfu: Cropping...");
-    PointCloud::Ptr out_cloud(new PointCloud());
+    PointCloudXYZ::Ptr out_cloud(new PointCloudXYZ());
     TrianglesPtr empty(new Triangles());
-    cropMesh(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
+    cropMesh<pcl::PointXYZ>(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
     cloud = out_cloud;
   }
 
@@ -418,24 +408,24 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
 
   kinfu_cloud->clear(); // save some memory
 
-  std::vector<PointCloud::Ptr> clouds;
+  std::vector<PointCloudXYZNormal::Ptr> clouds;
   std::vector<TrianglesPtr> clouds_triangles;
 
   ROS_INFO("kinfu: Divide triangles and points...");
   for (uint i = 0; i < meshes.size(); i++)
   {
-    clouds.push_back(PointCloud::Ptr(new PointCloud()));
+    clouds.push_back(PointCloudXYZNormal::Ptr(new PointCloudXYZNormal()));
     clouds_triangles.push_back(TrianglesPtr(new Triangles()));
 
-    separateMesh(meshes[i],clouds[i],clouds_triangles[i]);
+    separateMesh<pcl::PointNormal>(meshes[i],clouds[i],clouds_triangles[i]);
   }
   meshes.clear(); // save some memory
 
   TrianglesPtr triangles(new Triangles());
-  PointCloud::Ptr cloud(new PointCloud());
+  PointCloudXYZNormal::Ptr cloud(new PointCloudXYZNormal());
 
   ROS_INFO("kinfu: Merging points...");
-  mergePointCloudsAndMesh(clouds,cloud,&clouds_triangles,&(*triangles));
+  mergePointCloudsAndMesh<pcl::PointNormal>(clouds,cloud,&clouds_triangles,&(*triangles));
 
   // if needed, transform
   if (req->request_transformation)
@@ -453,14 +443,24 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   {
     ROS_INFO("kinfu: Cropping...");
     TrianglesPtr out_triangles(new Triangles());
-    PointCloud::Ptr out_cloud(new PointCloud());
-    cropMesh(req->bounding_box_min,req->bounding_box_max,cloud,triangles,out_cloud,out_triangles);
+    PointCloudXYZNormal::Ptr out_cloud(new PointCloudXYZNormal());
+    cropMesh<pcl::PointNormal>(req->bounding_box_min,req->bounding_box_max,cloud,triangles,out_cloud,out_triangles);
     cloud = out_cloud;
     triangles = out_triangles;
   }
 
+  if (req->request_remove_duplicates)
+  {
+    ROS_INFO("kinfu: Removing duplicate points...");
+    PointCloudXYZNormal::Ptr new_cloud(new PointCloudXYZNormal());
+    TrianglesPtr new_triangles(new Triangles());
+    removeDuplicatePoints<pcl::PointNormal>(cloud,triangles,new_cloud,new_triangles);
+    cloud = new_cloud;
+    triangles = new_triangles;
+  }
+
   ROS_INFO("kinfu: Publishing...");
-  pclPointCloudToMessage(cloud,resp->point_cloud);
+  pclXYZNormalCloudToMessage(cloud,resp->point_cloud,resp->normal_cloud,resp->curvature_cloud);
   resp->triangles.swap(*triangles);
 
   m_pub.publish(resp);
@@ -564,7 +564,7 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   const bool request_sphere = req->request_sphere;
 
   ROS_INFO("kinfu: Applying transform...");
-  PointCloud::Ptr cloud(new PointCloud());
+  PointCloudXYZ::Ptr cloud(new PointCloudXYZ());
   if (!request_bounding_box && !request_sphere)
   {
     resp->float_values.resize(size);
@@ -929,7 +929,7 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
 
   ROS_INFO("kinfu: extracting empty voxels from knowledge octree...");
   {
-    PointCloud::Ptr centers = m_cube_listener->GetOccupiedVoxelCenters();
+    PointCloudXYZ::Ptr centers = m_cube_listener->GetOccupiedVoxelCenters();
     uint64 centers_size = centers->size();
     for (uint64 i = 0; i < centers_size; i++)
     {
@@ -961,4 +961,79 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
   m_pub.publish(resp);
 }
 
+void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
+{
+  const bool edges_only = uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS);
 
+  ROS_INFO("kinfu: Extract Border Points Worker started.");
+  // prepare with same header
+  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  resp->tsdf_header = req->tsdf_header;
+
+  Eigen::Affine3f center_pose = m_reverse_initial_transformation.inverse();
+  if (req->request_transformation)
+  {
+    const Eigen::Affine3f tr = toEigenAffine(req->transformation);
+    center_pose = center_pose * tr;
+  }
+
+  const bool req_bbox = req->request_bounding_box;
+  const Eigen::Vector3f req_bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
+  const Eigen::Vector3f req_bbox_max(req->bounding_box_max.x,req->bounding_box_max.y,req->bounding_box_max.z);
+
+  const bool req_sphere = req->request_sphere;
+  const Eigen::Vector3f req_sphere_center(req->sphere_center.x,req->sphere_center.y,req->sphere_center.z);
+  const float req_sphere_radius = req->sphere_radius;
+
+  ROS_INFO("kinfu: Locking kinfu...");
+  if (!lockKinfu())
+    return; // shutting down or synchronization error
+
+  if (!m_kinfu->isShiftComplete())
+  {
+    ROS_INFO("kinfu: waiting for current shift to terminate...");
+    while (!m_kinfu->isShiftComplete())
+      m_kinfu->updateShift();
+  }
+  m_kinfu->syncKnownPoints();
+
+  PointCloudXYZNormal::ConstPtr cloud;
+  if (edges_only)
+    cloud = m_incomplete_points_listener->GetBorderCloud();
+  else
+    cloud = m_incomplete_points_listener->GetFrontierCloud();
+
+  Eigen::Affine3f scale_down = Eigen::Affine3f::Identity();
+  scale_down.linear() *= m_kinfu->getVoxelSize();
+
+  unlockKinfu();
+
+  if (!cloud)
+  {
+    ROS_ERROR("kinfu: incomplete point listener returned a NULL cloud, is incomplete point extraction enabled?");
+    return;
+  }
+
+  PointCloudXYZNormal::Ptr total_cloud(new PointCloudXYZNormal);
+  pcl::transformPointCloud(*cloud,*total_cloud,scale_down);
+
+  ROS_INFO("kinfu: extracted %u incomplete points.",uint(total_cloud->size()));
+
+  pcl::transformPointCloudWithNormals(*total_cloud,*total_cloud,center_pose.inverse());
+  if (req_bbox) // refine the bounding box
+  {
+    ROS_INFO("kinfu: applying bounding box...");
+    cropCloud<pcl::PointNormal>(req_bbox_min,req_bbox_max,total_cloud,total_cloud);
+  }
+  if (req_sphere)
+  {
+    ROS_INFO("kinfu: applying sphere...");
+    cropCloudWithSphere<pcl::PointNormal>(req_sphere_center,req_sphere_radius,total_cloud,total_cloud);
+  }
+
+  ROS_INFO("kinfu: Sending message...");
+  resp->reference_frame_id = m_reference_frame_name;
+  pclXYZNormalCloudToMessage(total_cloud,resp->point_cloud,resp->normal_cloud,resp->curvature_cloud);
+
+  m_pub.publish(resp);
+}

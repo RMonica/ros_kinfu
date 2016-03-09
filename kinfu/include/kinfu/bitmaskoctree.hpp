@@ -30,6 +30,40 @@ template <uint32_t LOWER_BITS>
     }
 
 template <uint32_t LOWER_BITS>
+  void pcl::BitmaskOctree<LOWER_BITS>::SetLeafCached(const Key & k,bool v,Cache & cache)
+    {
+    pcl::octree::OctreeKey okey = BuildOctreeKey(k);
+
+    if (cache.okey.x != okey.x || cache.okey.y != okey.y || cache.okey.z != okey.z)
+    {
+      cache.bitset = this->createLeaf(okey);
+      cache.okey = okey;
+    }
+    OccupancyBitset * &container = cache.bitset;
+
+    uint32 bkey = BuildBitsetIndex(k);
+
+    // if not already set, update it and update point counter
+    if ((*container)[bkey] != v)
+      {
+#if pcl_BitmaskOctree_COUNT_FULL_LEAVES
+      if (!v && (container->count() == container->size()))
+        m_full_leaves--;
+#endif
+
+      (*container)[bkey] = v;
+      v ? m_point_count++ : m_point_count--;
+
+      if (!v && (container->count() == 0))
+        this->removeLeaf(okey); // leaf is now empty -> remove it
+#if pcl_BitmaskOctree_COUNT_FULL_LEAVES
+      if (v && (container->count() == container->size()))
+        m_full_leaves++;
+#endif
+      }
+    }
+
+template <uint32_t LOWER_BITS>
   void pcl::BitmaskOctree<LOWER_BITS>::SetIntWithBitmask(int32 x,int32 y,int32 z,uint8 bitmask[BITMASK_BYTE_SIZE])
     {
     ExpandUntilPoint(x,y,z);
@@ -49,11 +83,30 @@ template <uint32_t LOWER_BITS>
     if (okey.x >= m_octree_side || okey.y >= m_octree_side || okey.z >= m_octree_side)
       return false; // out of boundary -> all empty
 
-    const OccupancyBitset * container = this->findLeaf(BuildOctreeKey(k));
+    const OccupancyBitset * container = this->findLeaf(okey);
     if (!container)
       return false; // not existing -> all empty
 
     return (*container)[BuildBitsetIndex(k)];
+    }
+
+template <uint32_t LOWER_BITS>
+  bool pcl::BitmaskOctree<LOWER_BITS>::GetLeafCached(const Key & k,Cache & cache) const
+    {
+    pcl::octree::OctreeKey okey = BuildOctreeKey(k);
+    if (okey.x >= m_octree_side || okey.y >= m_octree_side || okey.z >= m_octree_side)
+      return false; // out of boundary -> all empty
+
+    if (cache.okey.x != okey.x || cache.okey.y != okey.y || cache.okey.z != okey.z)
+    {
+      cache.bitset = this->findLeaf(okey);
+      cache.okey = okey;
+    }
+
+    if (!cache.bitset)
+      return false; // not existing -> all empty
+
+    return (*cache.bitset)[BuildBitsetIndex(k)];
     }
 
 template <uint32_t LOWER_BITS>
@@ -131,8 +184,9 @@ template <uint32_t LOWER_BITS>
     }
 
 template <uint32_t LOWER_BITS>
-  void pcl::BitmaskOctree<LOWER_BITS>::ExpandUntilPoint(int32 x,int32 y,int32 z)
+  bool pcl::BitmaskOctree<LOWER_BITS>::ExpandUntilPoint(int32 x,int32 y,int32 z)
     {
+    bool changed = false;
     do
       {
       int32 kx = (x >> LOWER_BITS) + int32(m_cx);
@@ -150,6 +204,7 @@ template <uint32_t LOWER_BITS>
       if (!overflow_x && !overflow_y && !overflow_z &&
         !underflow_x && !underflow_y && !underflow_z)
         break; // everything ok
+      changed = true;
 
       // add another tree level and thus increase its size by a factor of 2*2*2
       uint8 child_idx = static_cast<unsigned char> (((!overflow_x) << 2) | ((!overflow_y) << 1)
@@ -176,6 +231,8 @@ template <uint32_t LOWER_BITS>
       m_octree_side = 1 << (this->getTreeDepth());
       }
     while (true);
+
+    return changed;
     }
 
 template <uint32_t LOWER_BITS>

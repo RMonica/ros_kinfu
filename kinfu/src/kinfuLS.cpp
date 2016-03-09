@@ -91,6 +91,7 @@
 #include "worlddownloadmanager.h"
 #include "commandsubscriber.h"
 #include "weightcubelistener.h"
+#include "incompletepointslistener.h"
 
 // ROS custom messages
 #include <kinfu_msgs/KinfuTsdfResponse.h>
@@ -706,6 +707,22 @@ struct KinFuLSApp
       kinfu_->setWeightCubeListener(m_world_download_manager.getWeightCubeListener());
   }
 
+  void enableExtractBorderPoints()
+  {
+    TIncompletePointsListener::Ptr listener = m_world_download_manager.getIncompletePointsListener();
+    listener->AddAcceptedType(TIncompletePointsListener::TYPE_BORDERS);
+    kinfu_->setIncompletePointsListener(listener);
+    ROS_INFO("kinfu: border points extraction enabled.");
+  }
+
+  void enableExtractFrontierPoints()
+  {
+    TIncompletePointsListener::Ptr listener = m_world_download_manager.getIncompletePointsListener();
+    listener->AddAcceptedType(TIncompletePointsListener::TYPE_FRONTIERS);
+    kinfu_->setIncompletePointsListener(listener);
+    ROS_INFO("kinfu: frontier points extraction enabled.");
+  }
+
   void setSnapshotRate(int frame_count)
   {
     snapshot_rate_ = frame_count;
@@ -828,6 +845,16 @@ int main(int argc, char* argv[])
   bool extract_known_points = PARAM_DEFAULT_EXTRACT_KNOWN_POINTS;
   nh.getParam(PARAM_NAME_EXTRACT_KNOWN_POINTS,extract_known_points);
   app.setExtractKnownPoints(extract_known_points);
+
+  bool extract_border_points = PARAM_DEFAULT_EXTRACT_BORDER_POINTS;
+  nh.getParam(PARAM_NAME_EXTRACT_BORDER_POINTS,extract_border_points);
+  if (extract_border_points)
+    app.enableExtractBorderPoints();
+
+  bool extract_frontier_points = PARAM_DEFAULT_EXTRACT_FRONTIER_POINTS;
+  nh.getParam(PARAM_NAME_EXTRACT_FRONTIER_POINTS,extract_frontier_points);
+  if (extract_frontier_points)
+    app.enableExtractFrontierPoints();
 
   // start app main thread
   app.start();

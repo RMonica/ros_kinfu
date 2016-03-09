@@ -58,6 +58,7 @@ void ConvertTsdfToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_
 void ConvertCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
 void ConvertMeshToMeshMsg(const kinfu_msgs::KinfuTsdfResponse & resp,pcl_msgs::PolygonMesh & data);
 void ConvertIntensityCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
+void ConvertXYZNormalCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
 void ConvertUintArrayToMsg(const kinfu_msgs::KinfuTsdfResponse & resp,std_msgs::UInt64MultiArray &data,
   const std::vector<std::string> & dims,const std::vector<uint64_t> & sizes);
 void ConvertGridToMsg(const kinfu_msgs::KinfuTsdfResponse & resp,std_msgs::Float32MultiArray & data);

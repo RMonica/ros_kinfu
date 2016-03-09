@@ -351,14 +351,16 @@ void TWeightCubeListener::NewCubeWorker(NewCubeInfo::Ptr new_info)
   const Eigen::Vector3i nb_voxels = new_info->nb_voxels;
   const Eigen::Vector3i grid_global_origin = new_info->grid_global_origin;
 
+  OccupancyOctree::Cache cache;
+
   // there must be some off-by-one error somewhere: start from 1 and end at -1
-  for (int z = 1; z < nb_voxels.z() - 1; z++)
+  for (int z = 0; z < nb_voxels.z(); z++)
     {
     const int wz = (int(z + cyclical_shifted_origin.z()) % nb_voxels.z()) * z_edge;
-    for (int y = 1; y < nb_voxels.y() - 1; y++)
+    for (int y = 0; y < nb_voxels.y(); y++)
       {
       const int wy = (int(y + cyclical_shifted_origin.y()) % nb_voxels.y()) * y_edge;
-      for (int x = 1; x < nb_voxels.x() - 1; x++)
+      for (int x = 0; x < nb_voxels.x(); x++)
         {
         const int wx = (int(x + cyclical_shifted_origin.x()) % nb_voxels.x()) * x_edge;
 
@@ -368,7 +370,7 @@ void TWeightCubeListener::NewCubeWorker(NewCubeInfo::Ptr new_info)
           tx = x + int(grid_global_origin.x());
           ty = y + int(grid_global_origin.y());
           tz = z + int(grid_global_origin.z());
-          m_octree.SetInt(tx,ty,tz,true);
+          m_octree.SetIntCached(tx,ty,tz,true,cache);
           leaves_count++;
           }
         }
@@ -399,6 +401,7 @@ void TWeightCubeListener::RetrieveCubeWorker(NewCubeInfo::Ptr new_info)
 
   if (m_octree.GetPointCount() > 0) // skip if empty
     {
+    OccupancyOctree::Cache octree_cache;
     for (int z = 0; z < nb_voxels.z(); z++)
       {
       const int wz = (int(z + cyclical_shifted_origin.z()) % nb_voxels.z()) * z_edge;
@@ -413,7 +416,7 @@ void TWeightCubeListener::RetrieveCubeWorker(NewCubeInfo::Ptr new_info)
           tx = x + int(grid_global_origin.x());
           ty = y + int(grid_global_origin.y());
           tz = z + int(grid_global_origin.z());
-          if (m_octree.GetInt(tx,ty,tz))
+          if (m_octree.GetIntCached(tx,ty,tz,octree_cache))
             {
             (*m_retrieved_weights)[wx + wy + wz] = 16;
             leaves_count++;

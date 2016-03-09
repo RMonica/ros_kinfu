@@ -42,6 +42,18 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
   typedef boost::shared_ptr<BitmaskOctree> Ptr;
   typedef boost::shared_ptr<const BitmaskOctree> ConstPtr;
 
+  struct Cache
+    {
+    public:
+    typedef boost::shared_ptr<Cache> Ptr;
+    Cache(): okey(-1,-1,-1), bitset(NULL) {}
+    friend class BitmaskOctree<LOWER_BITS>;
+
+    private:
+    pcl::octree::OctreeKey okey;
+    OccupancyBitset * bitset;
+    };
+
   struct Key
     {
     uint32 x;
@@ -104,9 +116,17 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
 
   void SetLeaf(uint32 x,uint32 y,uint32 z,bool v) {SetLeaf(Key(x,y,z),v); }
 
+  void SetLeafCached(const Key & k,bool v,Cache & cache);
+
+  void SetLeafCached(uint32 x,uint32 y,uint32 z,bool v,Cache & cache) {SetLeafCached(Key(x,y,z),v,cache); }
+
   bool GetLeaf(const Key & k) const;
 
   bool GetLeaf(uint32 x,uint32 y,uint32 z) const {return GetLeaf(Key(x,y,z)); }
+
+  bool GetLeafCached(const Key & k,Cache & cache) const;
+
+  bool GetLeafCached(uint32 x,uint32 y,uint32 z,Cache & cache) const {return GetLeafCached(Key(x,y,z),cache); }
 
   // after this, the tree will be empty
   void Clear()
@@ -125,14 +145,26 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
     return GetLeaf(x + int32(m_cx << LOWER_BITS),y + int32(m_cy << LOWER_BITS),z + int32(m_cz << LOWER_BITS));
     }
 
+  bool GetIntCached(int32 x,int32 y,int32 z,Cache & cache) const
+    {
+    return GetLeafCached(x + int32(m_cx << LOWER_BITS),y + int32(m_cy << LOWER_BITS),z + int32(m_cz << LOWER_BITS),cache);
+    }
+
   // adapts the octree to the new point
-  void ExpandUntilPoint(int32 x,int32 y,int32 z);
+  bool ExpandUntilPoint(int32 x,int32 y,int32 z);
 
   // set value at x,y,z
   void SetInt(int32 x,int32 y,int32 z,bool v)
     {
     ExpandUntilPoint(x,y,z);
     SetLeaf(x + int32(m_cx << LOWER_BITS),y + int32(m_cy << LOWER_BITS),z + int32(m_cz << LOWER_BITS),v);
+    }
+
+  void SetIntCached(int32 x,int32 y,int32 z,bool v,Cache & cache)
+    {
+    if (ExpandUntilPoint(x,y,z))
+      cache = Cache();
+    SetLeafCached(x + int32(m_cx << LOWER_BITS),y + int32(m_cy << LOWER_BITS),z + int32(m_cz << LOWER_BITS),v,cache);
     }
 
   // helper function for float values

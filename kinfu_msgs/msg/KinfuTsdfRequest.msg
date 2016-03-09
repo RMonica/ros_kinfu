@@ -41,3 +41,6 @@ KinfuCameraIntrinsics camera_intrinsics
 
 bool request_view_poses
 KinfuPose[] view_poses
+
+# remove duplicate points if REQUEST_TYPE_GET_CLOUD or REQUEST_TYPE_GET_MESH
+bool request_remove_duplicates

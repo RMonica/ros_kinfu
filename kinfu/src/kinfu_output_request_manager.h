@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, Riccardo Monica
+ * Copyright (c) 2013-2016, Riccardo Monica
  *   RIMLab, Department of Information Engineering, University of Parma, Italy
  *   http://www.rimlab.ce.unipr.it/
  *
@@ -28,13 +28,16 @@
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef KINFU_OUTPUT_ACTION_CONVERSIONS_H
-#define KINFU_OUTPUT_ACTION_CONVERSIONS_H
+#ifndef KINFU_OUTPUT_REQUEST_MANAGER_H
+#define KINFU_OUTPUT_REQUEST_MANAGER_H
 
-#include <kinfu_msgs/KinfuTsdfResponse.h>
-#include <kinfu_msgs/RequestAction.h>
+// PCL
+#include <pcl/io/ply_io.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
 
 // ROS
+#include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <std_msgs/Header.h>
 #include <std_msgs/Float32MultiArray.h>
@@ -43,24 +46,57 @@
 #include <pcl_msgs/PolygonMesh.h>
 #include <sensor_msgs/Image.h>
 
-// PCL
-#include <pcl/point_types.h>
-#include <pcl/point_cloud.h>
+// Boost
+#include <boost/thread/mutex.hpp>
 
-// STL
-#include <vector>
-#include <string>
-#include <stdint.h>
+// ROS custom messages
+#include <kinfu_msgs/RequestAction.h>
+#include <kinfu_msgs/KinfuTsdfRequest.h>
 
-void ConvertToActionResponse(const kinfu_msgs::KinfuTsdfResponse &response, kinfu_msgs::RequestResult &result);
+// custom
+#include "parameters.h"
+#include "kinfu_output_ianswerer.h"
 
-void ConvertTsdfToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
-void ConvertCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
-void ConvertMeshToMeshMsg(const kinfu_msgs::KinfuTsdfResponse & resp,pcl_msgs::PolygonMesh & data);
-void ConvertIntensityCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
-void ConvertXYZNormalCloudToPointCloud2(const kinfu_msgs::KinfuTsdfResponse & resp,sensor_msgs::PointCloud2 & data);
-void ConvertUintArrayToMsg(const kinfu_msgs::KinfuTsdfResponse & resp,std_msgs::UInt64MultiArray &data,
-  const std::vector<std::string> & dims,const std::vector<uint64_t> & sizes);
-void ConvertGridToMsg(const kinfu_msgs::KinfuTsdfResponse & resp,std_msgs::Float32MultiArray & data);
+class RequestActionManager;
 
-#endif // KINFU_OUTPUT_ACTION_CONVERSIONS_H
+class RequestManager
+{
+  public:
+  class IQueuedResponse
+  {
+    public:
+    virtual void Update() = 0;
+    virtual bool IsEnded() = 0;
+    virtual ~IQueuedResponse() {}
+  };
+  typedef boost::shared_ptr<IQueuedResponse> PQueuedResponse;
+  typedef boost::shared_ptr<pcl_msgs::PolygonMesh> MeshPtr;
+  typedef std::list<PQueuedResponse> PQueuedResponseList;
+
+  typedef boost::shared_ptr<RequestActionManager> RequestActionManagerPtr;
+
+  RequestManager(ros::NodeHandle & nh,KinfuOutputIAnswerer & answerer);
+  ~RequestManager();
+
+  void SendResponse(const kinfu_msgs::RequestResultPtr & response_ptr);
+
+  private:
+  void requestCallback(const kinfu_msgs::KinfuTsdfRequestConstPtr & request);
+  void run();
+  void Update();
+
+  ros::NodeHandle & m_nh;
+
+  ros::Subscriber m_req_sub;
+  KinfuOutputIAnswerer & m_answerer;
+
+  boost::mutex m_mutex;
+  boost::thread m_update_thread;
+  bool m_is_terminating;
+
+  std::list<PQueuedResponse> m_queue;
+
+  RequestActionManagerPtr m_ramgr;
+};
+
+#endif // KINFU_OUTPUT_REQUEST_MANAGER_H

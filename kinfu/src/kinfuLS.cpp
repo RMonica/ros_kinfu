@@ -94,7 +94,6 @@
 #include "incompletepointslistener.h"
 
 // ROS custom messages
-#include <kinfu_msgs/KinfuTsdfResponse.h>
 #include <kinfu_msgs/KinfuTsdfRequest.h>
 
 typedef pcl::ScopeTime ScopeTimeT;

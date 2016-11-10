@@ -36,18 +36,14 @@
 #include <sensor_msgs/fill_image.h>
 #include <Eigen/StdVector>
 
+#include <pcl_conversions/pcl_conversions.h>
+
 #define VOXEL_EPSILON 0.0058
 #define SQR(x) ((x)*(x))
 
 WorldDownloadManager::WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex &shared_mutex,boost::condition_variable & cond):
-  m_nh(nhandle),m_shared_mutex(shared_mutex),m_shared_cond(cond)
+  m_nh(nhandle),m_shared_mutex(shared_mutex),m_shared_cond(cond),m_request_manager(m_nh,*this)
 {
-  m_nh.param<std::string>(PARAM_NAME_REQUEST_TOPIC,m_req_topic_name,PARAM_DEFAULT_REQUEST_TOPIC);
-  m_subReq = m_nh.subscribe(m_req_topic_name, 10,&WorldDownloadManager::requestCallback,this);
-
-  m_nh.param<std::string>(PARAM_NAME_RESPONSE_TOPIC,m_resp_topic_name,PARAM_DEFAULT_RESPONSE_TOPIC);
-  m_pub = m_nh.advertise<kinfu_msgs::KinfuTsdfResponse>(m_resp_topic_name,10);
-
   m_kinfu_waiting_count = 0;
   m_kinfu_available = false;
   m_is_shutting_down = false;
@@ -178,10 +174,11 @@ void WorldDownloadManager::requestWorker(kinfu_msgs::KinfuTsdfRequestConstPtr re
 void WorldDownloadManager::pingWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
   // just a ping: answer immediately with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
 
   resp->tsdf_header = req->tsdf_header;
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
   // if reset is required, reset the kinfu
   if (req->request_reset)
@@ -194,16 +191,17 @@ void WorldDownloadManager::pingWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
     unlockKinfu();
   }
 
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
 }
 
 void WorldDownloadManager::extractTsdfWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
   ROS_INFO("kinfu: Extract Tsdf Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
@@ -224,9 +222,10 @@ void WorldDownloadManager::extractTsdfWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   }
 
   ROS_INFO("kinfu: Sending message...");
-  fromTsdfToMessage(*cloud,resp);
+  pcl::toROSMsg(*cloud,resp->pointcloud);
+  resp->pointcloud.header = resp->header;
 
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract Tsdf Worker complete.");
 }
 
@@ -235,9 +234,10 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
   ROS_INFO("kinfu: Extract Cloud Worker started.");
 
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
@@ -251,14 +251,15 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
   unlockKinfu();
 
   extractCloudWorkerMCWithNormals(req,resp,kinfu_cloud);
+  resp->pointcloud.header = resp->header;
 
   ROS_INFO("kinfu: Publishing...");
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract Cloud Worker complete.");
 }
 
 void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdfRequestConstPtr req,
-    kinfu_msgs::KinfuTsdfResponsePtr resp,TsdfCloud::Ptr kinfu_cloud)
+    kinfu_msgs::RequestResultPtr resp, TsdfCloud::Ptr kinfu_cloud)
 {
   Eigen::Affine3f transformation = m_reverse_initial_transformation;
 
@@ -301,7 +302,7 @@ void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdf
   {
     ROS_INFO("kinfu: Cropping...");
     PointCloudXYZNormal::Ptr out_cloud(new PointCloudXYZNormal());
-    TrianglesPtr empty(new Triangles());
+    TriangleVectorPtr empty(new TriangleVector());
     cropMesh<pcl::PointNormal>(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
     cloud = out_cloud;
   }
@@ -310,11 +311,11 @@ void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdf
   {
     ROS_INFO("kinfu: Removing duplicate points...");
     PointCloudXYZNormal::Ptr new_cloud(new PointCloudXYZNormal());
-    removeDuplicatePoints<pcl::PointNormal>(cloud,TrianglesConstPtr(),new_cloud,TrianglesPtr());
+    removeDuplicatePoints<pcl::PointNormal>(cloud,TriangleVectorConstPtr(),new_cloud,TriangleVectorPtr());
     cloud = new_cloud;
   }
 
-  pclXYZNormalCloudToMessage(cloud,resp->point_cloud,resp->normal_cloud,resp->curvature_cloud);
+  pcl::toROSMsg(*cloud,resp->pointcloud);
 }
 
 void WorldDownloadManager::extractKnownWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
@@ -322,9 +323,10 @@ void WorldDownloadManager::extractKnownWorker(kinfu_msgs::KinfuTsdfRequestConstP
   ROS_INFO("kinfu: Extract Known Worker started.");
 
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
@@ -367,15 +369,16 @@ void WorldDownloadManager::extractKnownWorker(kinfu_msgs::KinfuTsdfRequestConstP
   {
     ROS_INFO("kinfu: Cropping...");
     PointCloudXYZ::Ptr out_cloud(new PointCloudXYZ());
-    TrianglesPtr empty(new Triangles());
+    TriangleVectorPtr empty(new TriangleVector());
     cropMesh<pcl::PointXYZ>(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
     cloud = out_cloud;
   }
 
   ROS_INFO("kinfu: Publishing...");
-  pclPointCloudToMessage(cloud,resp->point_cloud);
+  pcl::toROSMsg(*cloud,resp->pointcloud);
+  resp->pointcloud.header = resp->header;
 
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract Known Worker complete.");
 }
 
@@ -384,9 +387,10 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   ROS_INFO("kinfu: Extract Mesh Worker started.");
 
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
@@ -409,19 +413,19 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   kinfu_cloud->clear(); // save some memory
 
   std::vector<PointCloudXYZNormal::Ptr> clouds;
-  std::vector<TrianglesPtr> clouds_triangles;
+  std::vector<TriangleVectorPtr> clouds_triangles;
 
   ROS_INFO("kinfu: Divide triangles and points...");
   for (uint i = 0; i < meshes.size(); i++)
   {
     clouds.push_back(PointCloudXYZNormal::Ptr(new PointCloudXYZNormal()));
-    clouds_triangles.push_back(TrianglesPtr(new Triangles()));
+    clouds_triangles.push_back(TriangleVectorPtr(new TriangleVector()));
 
     separateMesh<pcl::PointNormal>(meshes[i],clouds[i],clouds_triangles[i]);
   }
   meshes.clear(); // save some memory
 
-  TrianglesPtr triangles(new Triangles());
+  TriangleVectorPtr triangles(new TriangleVector());
   PointCloudXYZNormal::Ptr cloud(new PointCloudXYZNormal());
 
   ROS_INFO("kinfu: Merging points...");
@@ -442,7 +446,7 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   if (req->request_bounding_box)
   {
     ROS_INFO("kinfu: Cropping...");
-    TrianglesPtr out_triangles(new Triangles());
+    TriangleVectorPtr out_triangles(new TriangleVector());
     PointCloudXYZNormal::Ptr out_cloud(new PointCloudXYZNormal());
     cropMesh<pcl::PointNormal>(req->bounding_box_min,req->bounding_box_max,cloud,triangles,out_cloud,out_triangles);
     cloud = out_cloud;
@@ -453,17 +457,25 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   {
     ROS_INFO("kinfu: Removing duplicate points...");
     PointCloudXYZNormal::Ptr new_cloud(new PointCloudXYZNormal());
-    TrianglesPtr new_triangles(new Triangles());
+    TriangleVectorPtr new_triangles(new TriangleVector());
     removeDuplicatePoints<pcl::PointNormal>(cloud,triangles,new_cloud,new_triangles);
     cloud = new_cloud;
     triangles = new_triangles;
   }
 
   ROS_INFO("kinfu: Publishing...");
-  pclXYZNormalCloudToMessage(cloud,resp->point_cloud,resp->normal_cloud,resp->curvature_cloud);
-  resp->triangles.swap(*triangles);
+  pcl::toROSMsg(*cloud,resp->mesh.cloud);
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
+  resp->mesh.header = resp->header;
 
-  m_pub.publish(resp);
+  for (uint64 i = 0; i < (*triangles).size(); i++)
+  {
+    const Triangle & triangle = (*triangles)[i];
+    resp->mesh.polygons.push_back(triangle.toVertices());
+  }
+
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract Mesh Worker complete.");
 }
 
@@ -471,7 +483,7 @@ void WorldDownloadManager::extractViewWorker(kinfu_msgs::KinfuTsdfRequestConstPt
 {
   ROS_INFO("kinfu: Extract View Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
 
   Eigen::Affine3f view_pose = m_reverse_initial_transformation.inverse();
@@ -507,9 +519,11 @@ void WorldDownloadManager::extractViewWorker(kinfu_msgs::KinfuTsdfRequestConstPt
 
   ROS_INFO("kinfu: Sending message...");
   sensor_msgs::fillImage(resp->image, "rgb8", rows, cols, cols * 3, &view_host[0]);
-  resp->image.header.frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
+  resp->image.header = resp->header;
 
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract View Worker complete.");
 }
 
@@ -517,7 +531,7 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
 {
   ROS_INFO("kinfu: Extract View Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
 
   Eigen::Affine3f view_pose = m_reverse_initial_transformation.inverse();
@@ -564,10 +578,9 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   const bool request_sphere = req->request_sphere;
 
   ROS_INFO("kinfu: Applying transform...");
-  PointCloudXYZ::Ptr cloud(new PointCloudXYZ());
+  PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
   if (!request_bounding_box && !request_sphere)
   {
-    resp->float_values.resize(size);
     cloud->resize(size);
     for (uint i = 0; i < size; i++)
     {
@@ -576,6 +589,7 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
         (*cloud)[i].x = NAN;
         (*cloud)[i].y = NAN;
         (*cloud)[i].z = NAN;
+        (*cloud)[i].intensity = intensity_host[i];
         continue;
       }
 
@@ -584,10 +598,8 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
       (*cloud)[i].x = tpt.x();
       (*cloud)[i].y = tpt.y();
       (*cloud)[i].z = tpt.z();
+      (*cloud)[i].intensity = intensity_host[i];
       }
-
-    for (uint i = 0; i < size; i++)
-      resp->float_values[i] = intensity_host[i];
 
     cloud->width = cols;
     cloud->height = rows;
@@ -603,7 +615,6 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
     const Eigen::Vector3f sphere_center(req->sphere_center.x,req->sphere_center.y,req->sphere_center.z);
     const float sphere_radius = req->sphere_radius;
 
-    resp->float_values.reserve(size);
     cloud->reserve(size);
     for (uint i = 0; i < size; i++)
     {
@@ -623,10 +634,9 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
         if ((tpt - sphere_center).squaredNorm() > sphere_radius * sphere_radius)
           continue;
 
-      pcl::PointXYZ ppt;
-      ppt.x = tpt.x(); ppt.y = tpt.y(); ppt.z = tpt.z();
+      pcl::PointXYZI ppt;
+      ppt.x = tpt.x(); ppt.y = tpt.y(); ppt.z = tpt.z(); ppt.intensity = intensity_host[i];
       cloud->push_back(ppt);
-      resp->float_values.push_back(intensity_host[i]);
       }
 
     cloud->width = cloud->size();
@@ -635,11 +645,13 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   }
 
   ROS_INFO("kinfu: Sending message...");
-  pclPointCloudToMessage(cloud,resp->point_cloud);
+  pcl::toROSMsg(*cloud,resp->pointcloud);
 
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
+  resp->pointcloud.header = resp->header;
 
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract View Worker complete.");
 }
 
@@ -647,7 +659,7 @@ void WorldDownloadManager::extractVoxelCountGenericWorker(kinfu_msgs::KinfuTsdfR
 {
   ROS_INFO("kinfu: Extract Voxel Count Generic Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
 
   if (req->request_view_poses)
@@ -671,7 +683,7 @@ void WorldDownloadManager::extractVoxelCountGenericWorker(kinfu_msgs::KinfuTsdfR
   sphere_center = m_reverse_initial_transformation.inverse() * sphere_center;
   const float sphere_radius = req->sphere_radius;
 
-  resp->uint_values.resize(2); // [0]: occupied, [1] unknown
+  resp->uint_values.data.resize(2); // [0]: occupied, [1] unknown
 
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
@@ -710,35 +722,50 @@ void WorldDownloadManager::extractVoxelCountGenericWorker(kinfu_msgs::KinfuTsdfR
 
     occupied_count++;
   }
-  resp->uint_values[0] = occupied_count;
+  resp->uint_values.data[0] = occupied_count;
 
   // these count the unknown voxels
   if (has_sphere)
   {
     ROS_INFO("kinfu: counting unknown voxels (sphere)...");
-    resp->uint_values[1] = m_cube_listener->CountOccupiedVoxelsInSphere(sphere_center,sphere_radius,true);
+    resp->uint_values.data[1] = m_cube_listener->CountOccupiedVoxelsInSphere(sphere_center,sphere_radius,true);
   }
   else if (has_bounding_box)
   {
     ROS_INFO("kinfu: counting unknown voxels (bounding box)...");
-    resp->uint_values[1] = m_cube_listener->CountOccupiedVoxelsInBBox(bbox_min,bbox_max,true);
+    resp->uint_values.data[1] = m_cube_listener->CountOccupiedVoxelsInBBox(bbox_min,bbox_max,true);
   }
   else
-    resp->uint_values[1] = 0;
+    resp->uint_values.data[1] = 0;
 
   unlockKinfu();
 
   ROS_INFO("kinfu: Sending message...");
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
-  m_pub.publish(resp);
+  {
+    resp->uint_values.layout.data_offset = 0;
+    std_msgs::MultiArrayDimension dim1;
+    dim1.label = "Voxel type";
+    dim1.size = 2;
+    dim1.stride = 2;
+    std_msgs::MultiArrayDimension dim2;
+    dim2.label = "View count";
+    dim2.size = resp->uint_values.data.size() / 2;
+    dim2.stride = dim2.size * dim1.stride;
+    resp->uint_values.layout.dim.push_back(dim1);
+    resp->uint_values.layout.dim.push_back(dim2);
+  }
+
+  m_request_manager.SendResponse(resp);
 }
 
 void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
   ROS_INFO("kinfu: Extract Voxel Count Views Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse);
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult);
   resp->tsdf_header = req->tsdf_header;
 
   if (!req->request_view_poses)
@@ -769,7 +796,7 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
 
   const bool has_intrinsics = req->request_camera_intrinsics;
 
-  resp->uint_values.resize(view_poses.size() * 2,0);
+  resp->uint_values.data.resize(view_poses.size() * 2,0);
 
   const bool has_bounding_box = req->request_bounding_box;
   Eigen::Vector3f bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
@@ -849,18 +876,33 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
       }
 
       if (intensity_host[h] > 0.5)
-        resp->uint_values[i * 2] += 1;       // occupied
+        resp->uint_values.data[i * 2] += 1;       // occupied
       else
-        resp->uint_values[(i * 2) + 1] += 1; // unknown
+        resp->uint_values.data[(i * 2) + 1] += 1; // unknown
     }
   }
 
   unlockKinfu();
 
   ROS_INFO("kinfu: Sending message...");
-  resp->reference_frame_id = m_reference_frame_name;
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
 
-  m_pub.publish(resp);
+  {
+    resp->uint_values.layout.data_offset = 0;
+    std_msgs::MultiArrayDimension dim1;
+    dim1.label = "Voxel type";
+    dim1.size = 2;
+    dim1.stride = 2;
+    std_msgs::MultiArrayDimension dim2;
+    dim2.label = "View count";
+    dim2.size = resp->uint_values.data.size() / 2;
+    dim2.stride = dim2.size * dim1.stride;
+    resp->uint_values.layout.dim.push_back(dim1);
+    resp->uint_values.layout.dim.push_back(dim2);
+  }
+
+  m_request_manager.SendResponse(resp);
   ROS_INFO("kinfu: Extract Voxel Count complete.");
 }
 
@@ -868,7 +910,7 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
 {
   ROS_INFO("kinfu: Extract Voxel Grid Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
 
   const Eigen::Vector3f bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
@@ -952,13 +994,24 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
   unlockKinfu();
 
   ROS_INFO("kinfu: Sending message...");
-  resp->reference_frame_id = m_reference_frame_name;
-  resp->float_values = voxelgrid;
-  resp->uint_values.resize(3);
-  for (uint i = 0; i < 3; i++)
-    resp->uint_values[i] = voxel_count[i];
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
+  resp->float_values.data = voxelgrid;
 
-  m_pub.publish(resp);
+  static const char * const dims[3] = {"x","y","z"};
+  resp->float_values.layout.data_offset = 0;
+  uint64 stride_inc = 1;
+  for (uint64 i = 0; i < 3; i++)
+    {
+    std_msgs::MultiArrayDimension dim;
+    dim.label = dims[i];
+    dim.size = voxel_count[i];
+    dim.stride = stride_inc;
+    stride_inc *= voxel_count[i];
+    resp->float_values.layout.dim.push_back(dim);
+    }
+
+  m_request_manager.SendResponse(resp);
 }
 
 void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
@@ -967,7 +1020,7 @@ void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfReques
 
   ROS_INFO("kinfu: Extract Border Points Worker started.");
   // prepare with same header
-  kinfu_msgs::KinfuTsdfResponsePtr resp(new kinfu_msgs::KinfuTsdfResponse());
+  kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
 
   Eigen::Affine3f center_pose = m_reverse_initial_transformation.inverse();
@@ -1032,8 +1085,10 @@ void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfReques
   }
 
   ROS_INFO("kinfu: Sending message...");
-  resp->reference_frame_id = m_reference_frame_name;
-  pclXYZNormalCloudToMessage(total_cloud,resp->point_cloud,resp->normal_cloud,resp->curvature_cloud);
+  resp->header.frame_id = m_reference_frame_name;
+  resp->header.stamp = ros::Time::now();
+  pcl::toROSMsg(*total_cloud,resp->pointcloud);
+  resp->pointcloud.header = resp->header;
 
-  m_pub.publish(resp);
+  m_request_manager.SendResponse(resp);
 }

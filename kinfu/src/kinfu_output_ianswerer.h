@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015, Riccardo Monica
+ * Copyright (c) 2013-2016, Riccardo Monica
  *   RIMLab, Department of Information Engineering, University of Parma, Italy
  *   http://www.rimlab.ce.unipr.it/
  *
@@ -28,20 +28,14 @@
  * OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef PARAMETERS_H
-#define PARAMETERS_H
+#ifndef KINFU_OUTPUT_IANSWERER_H
+#define KINFU_OUTPUT_IANSWERER_H
 
-// input topics
-#define PARAM_NAME_RESPONSE_TOPIC         "kinfu_response_topic"
-#define PARAM_DEFAULT_RESPONSE_TOPIC      "/kinfu_response_topic"
+class KinfuOutputIAnswerer
+{
+  public:
+  virtual void requestCallback(kinfu_msgs::KinfuTsdfRequestConstPtr request) = 0;
+  virtual ~KinfuOutputIAnswerer() {}
+};
 
-#define PARAM_NAME_REQUEST_ACTION_NAME    "request_action_name"
-#define PARAM_DEFAULT_REQUEST_ACTION_NAME "/kinfu_output/actions/request"
-
-#define PARAM_NAME_REQUEST_ACTION_MAGIC   "kinfu_output_request_action_magic"
-#define PARAM_DEFAULT_REQUEST_ACTION_MAGIC "KINFU_OUTPUT_ACTION_MAGIC_SOURCE_NAME"
-
-#define PARAM_NAME_KINFU_REQUEST_TOPIC    "kinfu_request_topic"
-#define PARAM_DEFAULT_KINFU_REQUEST_TOPIC "/kinfu_request_topic"
-
-#endif // PARAMETERS_H
+#endif // KINFU_OUTPUT_IANSWERER_H

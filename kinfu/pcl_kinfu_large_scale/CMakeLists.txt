@@ -1,5 +1,9 @@
+option(CUDA_USE_STATIC_CUDA_RUNTIME OFF)
 find_package(CUDA REQUIRED)
 message(STATUS "kinfu: CUDA ${CUDA_VERSION} found.")
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/remove_vtk_definitions_hack.cmake)
+REMOVE_VTK_DEFINITIONS()
 
 set(KinfuLargeScale_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/containers/include
@@ -47,7 +51,7 @@ target_link_libraries(
   KinfuLargeScaleCPP ${PCL_LIBRARIES}
   )
 
-set(CUDA_NVCC_FLAGS "-gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_52,code=sm_52")
+set(CUDA_NVCC_FLAGS "-D_FORCE_INLINES -gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_52,code=sm_52")
 set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} "--ftz=true --prec-div=false --prec-sqrt=false")	
 set(CUDA_VERBOSE_BUILD OFF)
 cuda_add_library(KinfuLargeScaleCUDA

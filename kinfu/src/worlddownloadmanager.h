@@ -62,13 +62,14 @@
 #include "parameters.h"
 #include "weightcubelistener.h"
 #include "incompletepointslistener.h"
+#include "kinfu_output_request_manager.h"
 
 // ROS custom messages
-#include <kinfu_msgs/KinfuTsdfResponse.h>
+#include <kinfu_msgs/RequestAction.h>
 #include <kinfu_msgs/KinfuTsdfRequest.h>
 #include <kinfu_msgs/KinfuCameraIntrinsics.h>
 
-class WorldDownloadManager
+class WorldDownloadManager: private KinfuOutputIAnswerer
 {
   public:
   typedef boost::shared_ptr<ros::Publisher> PublisherPtr;
@@ -78,12 +79,31 @@ class WorldDownloadManager
   typedef pcl::PolygonMesh Mesh;
   typedef pcl::PointCloud<pcl::PointXYZI> TsdfCloud;
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
+  typedef pcl::PointCloud<pcl::PointXYZI> PointCloudXYZI;
   typedef pcl::PointCloud<pcl::PointNormal> PointCloudXYZNormal;
-  typedef std::vector<kinfu_msgs::KinfuMeshTriangle> Triangles;
-  typedef boost::shared_ptr<Triangles> TrianglesPtr;
-  typedef boost::shared_ptr<const Triangles> TrianglesConstPtr;
   typedef pcl::gpu::kinfuLS::RayCaster RayCaster;
   typedef std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> > Vector3fVector;
+  typedef std::vector<Eigen::Vector3i, Eigen::aligned_allocator<Eigen::Vector3i> > Vector3iVector;
+  struct Triangle
+  {
+    uint64 & operator[](const std::size_t index) {return indices[index]; }
+    uint64 operator[](const std::size_t index) const {return indices[index]; }
+
+    pcl_msgs::Vertices toVertices() const
+    {
+      pcl_msgs::Vertices v;
+      v.vertices.resize(3);
+      for (uint64 index = 0; index < 3; index++)
+        v.vertices[index] = indices[index];
+      return v;
+    }
+
+    private:
+    uint64 indices[3];
+  };
+  typedef std::vector<Triangle> TriangleVector;
+  typedef boost::shared_ptr<TriangleVector> TriangleVectorPtr;
+  typedef boost::shared_ptr<const TriangleVector> TriangleVectorConstPtr;
 
   WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex &shared_mutex,boost::condition_variable & cond);
 
@@ -106,7 +126,7 @@ class WorldDownloadManager
 
   private:
 
-  // called by the ROS thread on request
+  // called by the request manager on request
   void requestCallback(kinfu_msgs::KinfuTsdfRequestConstPtr req);
 
   void requestWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req,
@@ -119,19 +139,20 @@ class WorldDownloadManager
   void extractTsdfWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
   static void cropTsdfCloud(const TsdfCloud & in,TsdfCloud & out,
     const kinfu_msgs::KinfuCloudPoint & min,const kinfu_msgs::KinfuCloudPoint & max);
-  static void fromTsdfToMessage(const TsdfCloud & in, kinfu_msgs::KinfuTsdfResponse::Ptr &resp);
 
   void extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
   void extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdfRequestConstPtr req,
-    kinfu_msgs::KinfuTsdfResponsePtr resp,TsdfCloud::Ptr tsdf_cloud);
+    kinfu_msgs::RequestResultPtr resp,TsdfCloud::Ptr tsdf_cloud);
 
   template <class PointT>
   static void separateMesh(Mesh::ConstPtr mesh,typename pcl::PointCloud<PointT>::Ptr points,
-    TrianglesPtr triangles = TrianglesPtr());
+    TriangleVectorPtr triangles = TriangleVectorPtr());
 
   template <class PointT>
   static void mergePointCloudsAndMesh(std::vector<typename pcl::PointCloud<PointT>::Ptr> &pointclouds,
-    typename pcl::PointCloud<PointT>::Ptr out_cloud, std::vector<TrianglesPtr> *meshes = NULL, Triangles *out_mesh = NULL);
+    typename pcl::PointCloud<PointT>::Ptr out_cloud,
+    std::vector<TriangleVectorPtr> *meshes = NULL,
+    TriangleVector *out_mesh = NULL);
 
   void extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
 
@@ -163,11 +184,11 @@ class WorldDownloadManager
   template <class PointT>
   static void cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
     const kinfu_msgs::KinfuCloudPoint & max,typename pcl::PointCloud<PointT>::ConstPtr cloud,
-    TrianglesConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TrianglesPtr out_triangles);
+    TriangleVectorConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TriangleVectorPtr out_triangles);
 
   template <class PointT>
   static void removeDuplicatePoints(typename pcl::PointCloud<PointT>::ConstPtr cloud,
-    TrianglesConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TrianglesPtr out_triangles);
+    TriangleVectorConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TriangleVectorPtr out_triangles);
 
   template <class PointT>
   static void cropCloud(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
@@ -176,13 +197,6 @@ class WorldDownloadManager
   template <class PointT>
   static void cropCloudWithSphere(const Eigen::Vector3f & sphere_center,const float sphere_radius,
     typename pcl::PointCloud<PointT>::ConstPtr cloud,typename pcl::PointCloud<PointT>::Ptr out_cloud);
-
-  static void pclPointCloudToMessage(PointCloudXYZ::Ptr pcl_cloud,std::vector<kinfu_msgs::KinfuCloudPoint> & message);
-
-  static void pclXYZNormalCloudToMessage(PointCloudXYZNormal::Ptr pcl_cloud,
-                                         std::vector<kinfu_msgs::KinfuCloudPoint>& message_cloud,
-                                         std::vector<kinfu_msgs::KinfuCloudPoint>& message_normals,
-                                         std::vector<float> &message_curvatures);
 
   // many kinds of array and vectors may be used here
   // (the main reason being that ROS uses std::vector
@@ -199,12 +213,6 @@ class WorldDownloadManager
   static void findExtraCubesForBoundingBox(const Eigen::Vector3f& current_cube_min, const Eigen::Vector3f& current_cube_max,
     const Eigen::Vector3f& bbox_min, const Eigen::Vector3f& bbox_max, Vector3fVector& cubes_centers, bool& extract_current);
   static Eigen::Vector3f floor3f(const Eigen::Vector3f & v);
-
-  ros::Subscriber m_subReq;
-  std::string m_req_topic_name;
-
-  ros::Publisher m_pub;
-  std::string m_resp_topic_name;
 
   ros::NodeHandle &m_nh;
 
@@ -236,6 +244,8 @@ class WorldDownloadManager
   TIncompletePointsListener::Ptr m_incomplete_points_listener;
 
   std::string m_reference_frame_name;
+
+  RequestManager m_request_manager;
 };
 
 #endif // WORLDDOWNLOADMANAGER_H

@@ -11,6 +11,8 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   tf
+  pcl_msgs
+  pcl_conversions
 )
 
 find_package(
@@ -66,6 +68,9 @@ if (${KINFU_CONFIGURED})
     src/worlddownloadmanager.cpp
     src/worlddownloadutils.cpp
     src/incompletepointslistener.cpp
+
+    src/kinfu_output_request_manager.cpp
+    src/kinfu_output_action_manager.cpp
     )
 
   add_dependencies(kinfu kinfu_msgs_generate_messages_cpp)

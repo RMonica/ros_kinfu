@@ -39,7 +39,9 @@
 #include <cstring>
 
 template <class PointT>
-void WorldDownloadManager::separateMesh(Mesh::ConstPtr mesh,typename pcl::PointCloud<PointT>::Ptr points,TrianglesPtr triangles)
+void WorldDownloadManager::separateMesh(Mesh::ConstPtr mesh,
+                                        typename pcl::PointCloud<PointT>::Ptr points,
+                                        TriangleVectorPtr triangles)
 {
   // convert the point cloud
   pcl::fromPCLPointCloud2(mesh->cloud,*points);
@@ -59,10 +61,10 @@ void WorldDownloadManager::separateMesh(Mesh::ConstPtr mesh,typename pcl::PointC
         continue;
       }
 
-      kinfu_msgs::KinfuMeshTriangle tri;
+      Triangle tri;
 
       for (uint i = 0; i < 3; i++)
-        tri.vertex_id[i] = v.vertices[i];
+        tri[i] = v.vertices[i];
 
       triangles->push_back(tri);
     }
@@ -70,13 +72,13 @@ void WorldDownloadManager::separateMesh(Mesh::ConstPtr mesh,typename pcl::PointC
 }
 
 template void WorldDownloadManager::separateMesh<pcl::PointXYZ>
-  (Mesh::ConstPtr mesh,typename pcl::PointCloud<pcl::PointXYZ>::Ptr points,TrianglesPtr triangles);
+  (Mesh::ConstPtr mesh,typename pcl::PointCloud<pcl::PointXYZ>::Ptr points,TriangleVectorPtr triangles);
 template void WorldDownloadManager::separateMesh<pcl::PointNormal>
-  (Mesh::ConstPtr mesh,typename pcl::PointCloud<pcl::PointNormal>::Ptr points,TrianglesPtr triangles);
+  (Mesh::ConstPtr mesh,typename pcl::PointCloud<pcl::PointNormal>::Ptr points,TriangleVectorPtr triangles);
 
 template <class PointT>
 void WorldDownloadManager::mergePointCloudsAndMesh(std::vector<typename pcl::PointCloud<PointT>::Ptr> &pointclouds,
-  typename pcl::PointCloud<PointT>::Ptr out_cloud, std::vector<TrianglesPtr> * meshes,Triangles * out_mesh)
+  typename pcl::PointCloud<PointT>::Ptr out_cloud,std::vector<TriangleVectorPtr> * meshes,TriangleVector * out_mesh)
 {
   uint offset = 0;
   const uint pointcloud_count = pointclouds.size();
@@ -101,11 +103,11 @@ void WorldDownloadManager::mergePointCloudsAndMesh(std::vector<typename pcl::Poi
 
       for (uint triangle_i = 0; triangle_i < mesh_size; triangle_i++)
       {
-        kinfu_msgs::KinfuMeshTriangle tri;
-        const kinfu_msgs::KinfuMeshTriangle & v = (*(*meshes)[pointcloud_i])[triangle_i];
+        Triangle tri;
+        const Triangle & v = (*(*meshes)[pointcloud_i])[triangle_i];
 
         for (uint i = 0; i < 3; i++)
-          tri.vertex_id[i] = v.vertex_id[i] + offset;
+          tri[i] = v[i] + offset;
 
         out_mesh->push_back(tri);
       }
@@ -117,15 +119,15 @@ void WorldDownloadManager::mergePointCloudsAndMesh(std::vector<typename pcl::Poi
 
 template void WorldDownloadManager::mergePointCloudsAndMesh<pcl::PointXYZ>(
   std::vector<typename pcl::PointCloud<pcl::PointXYZ>::Ptr> &pointclouds,
-  typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud, std::vector<TrianglesPtr> * meshes,Triangles * out_mesh);
+  typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud, std::vector<TriangleVectorPtr> * meshes,TriangleVector * out_mesh);
 template void WorldDownloadManager::mergePointCloudsAndMesh<pcl::PointNormal>(
   std::vector<typename pcl::PointCloud<pcl::PointNormal>::Ptr> &pointclouds,
-  typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud, std::vector<TrianglesPtr> * meshes,Triangles * out_mesh);
+  typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud, std::vector<TriangleVectorPtr> * meshes,TriangleVector * out_mesh);
 
 template <class PointT>
 void WorldDownloadManager::cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
   const kinfu_msgs::KinfuCloudPoint & max,typename pcl::PointCloud<PointT>::ConstPtr cloud,
-  TrianglesConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud, TrianglesPtr out_triangles)
+  TriangleVectorConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TriangleVectorPtr out_triangles)
 {
   const uint triangles_size = triangles->size();
   const uint cloud_size = cloud->size();
@@ -170,12 +172,12 @@ void WorldDownloadManager::cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
 
   for (uint i = 0; i < triangles_size; i++)
   {
-    const kinfu_msgs::KinfuMeshTriangle & tri = (*triangles)[i];
+    const Triangle & tri = (*triangles)[i];
     bool is_valid = true;
 
     // validate all the vertices
     for (uint h = 0; h < 3; h++)
-      if (!valid_points[tri.vertex_id[h]])
+      if (!valid_points[tri[h]])
       {
         is_valid = false;
         break;
@@ -183,11 +185,11 @@ void WorldDownloadManager::cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
 
     if (is_valid)
     {
-      kinfu_msgs::KinfuMeshTriangle out_tri;
+      Triangle out_tri;
 
       // remap the triangle
       for (uint h = 0; h < 3; h++)
-        out_tri.vertex_id[h] = valid_points_remap[(*triangles)[i].vertex_id[h]];
+        out_tri[h] = valid_points_remap[(*triangles)[i][h]];
 
       out_triangles->push_back(out_tri);
       offset++;
@@ -199,10 +201,10 @@ void WorldDownloadManager::cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
 
 template void WorldDownloadManager::cropMesh<pcl::PointXYZ>(const kinfu_msgs::KinfuCloudPoint & min,
   const kinfu_msgs::KinfuCloudPoint & max,typename pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud,
-  TrianglesConstPtr triangles,typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud, TrianglesPtr out_triangles);
+  TriangleVectorConstPtr triangles,typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud, TriangleVectorPtr out_triangles);
 template void WorldDownloadManager::cropMesh<pcl::PointNormal>(const kinfu_msgs::KinfuCloudPoint & min,
   const kinfu_msgs::KinfuCloudPoint & max,typename pcl::PointCloud<pcl::PointNormal>::ConstPtr cloud,
-  TrianglesConstPtr triangles,typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud, TrianglesPtr out_triangles);
+  TriangleVectorConstPtr triangles,typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud, TriangleVectorPtr out_triangles);
 
 template <class PointT>
   void WorldDownloadManager::cropCloud(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
@@ -277,41 +279,6 @@ template void WorldDownloadManager::cropCloudWithSphere<pcl::PointNormal>(const 
   typename pcl::PointCloud<pcl::PointNormal>::ConstPtr cloud,typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud);
 template void WorldDownloadManager::cropCloudWithSphere<pcl::PointXYZ>(const Eigen::Vector3f & center,const float radius,
   typename pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud,typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud);
-
-void WorldDownloadManager::pclPointCloudToMessage(PointCloudXYZ::Ptr pcl_cloud,
-  std::vector<kinfu_msgs::KinfuCloudPoint> & message)
-{
-  uint cloud_size = pcl_cloud->size();
-  message.resize(cloud_size);
-
-  for (uint i = 0; i < cloud_size; i++)
-  {
-    message[i].x = (*pcl_cloud)[i].x;
-    message[i].y = (*pcl_cloud)[i].y;
-    message[i].z = (*pcl_cloud)[i].z;
-  }
-}
-
-void WorldDownloadManager::pclXYZNormalCloudToMessage(PointCloudXYZNormal::Ptr pcl_cloud,
-  std::vector<kinfu_msgs::KinfuCloudPoint> & message_cloud,std::vector<kinfu_msgs::KinfuCloudPoint> & message_normals,
-  std::vector<float> & message_curvatures)
-{
-  uint cloud_size = pcl_cloud->size();
-  message_cloud.resize(cloud_size);
-  message_normals.resize(cloud_size);
-  message_curvatures.resize(cloud_size);
-
-  for (uint i = 0; i < cloud_size; i++)
-  {
-    message_cloud[i].x = (*pcl_cloud)[i].x;
-    message_cloud[i].y = (*pcl_cloud)[i].y;
-    message_cloud[i].z = (*pcl_cloud)[i].z;
-    message_normals[i].x = (*pcl_cloud)[i].normal_x;
-    message_normals[i].y = (*pcl_cloud)[i].normal_y;
-    message_normals[i].z = (*pcl_cloud)[i].normal_z;
-    message_curvatures[i] = (*pcl_cloud)[i].curvature;
-  }
-}
 
 bool WorldDownloadManager::marchingCubes(TsdfCloud::Ptr cloud, std::vector<Mesh::Ptr> &output_meshes) const
 {
@@ -606,7 +573,7 @@ class WorldDownloadManager_mergeMeshTrianglesAverageClass<pcl::PointNormal>
 
 template <class PointT>
   void WorldDownloadManager::removeDuplicatePoints(typename pcl::PointCloud<PointT>::ConstPtr cloud,
-  TrianglesConstPtr triangles,typename pcl::PointCloud<PointT>::Ptr out_cloud,TrianglesPtr out_triangles)
+  TriangleVectorConstPtr triangles, typename pcl::PointCloud<PointT>::Ptr out_cloud, TriangleVectorPtr out_triangles)
 {
   const uint64 input_size = cloud->size();
   std::vector<uint64> ordered(input_size);
@@ -647,13 +614,13 @@ template <class PointT>
     out_triangles->resize(triangles_size);
     for (uint64 i = 0; i < triangles_size; i++)
     {
-      kinfu_msgs::KinfuMeshTriangle new_tri;
+      Triangle new_tri;
       for (uint h = 0; h < 3; h++)
-        new_tri.vertex_id[h] = re_association_vector[(*triangles)[i].vertex_id[h]];
+        new_tri[h] = re_association_vector[(*triangles)[i][h]];
 
       bool degenerate = false;
       for (uint h = 0; h < 3; h++)
-        if (new_tri.vertex_id[h] == new_tri.vertex_id[(h + 1) % 3])
+        if (new_tri[h] == new_tri[(h + 1) % 3])
           degenerate = true;
 
       if (!degenerate)
@@ -668,9 +635,9 @@ template <class PointT>
 }
 
 template void WorldDownloadManager::removeDuplicatePoints<pcl::PointXYZ>(typename pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud,
-  TrianglesConstPtr triangles,typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud,TrianglesPtr out_triangles);
+  TriangleVectorConstPtr triangles,typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud,TriangleVectorPtr out_triangles);
 template void WorldDownloadManager::removeDuplicatePoints<pcl::PointNormal>(typename pcl::PointCloud<pcl::PointNormal>::ConstPtr cloud,
-  TrianglesConstPtr triangles,typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud,TrianglesPtr out_triangles);
+  TriangleVectorConstPtr triangles,typename pcl::PointCloud<pcl::PointNormal>::Ptr out_cloud,TriangleVectorPtr out_triangles);
 
 void WorldDownloadManager::findExtraCubesForBoundingBox(const Eigen::Vector3f& current_cube_min,
   const Eigen::Vector3f& current_cube_max,const Eigen::Vector3f& bbox_min,const Eigen::Vector3f& bbox_max,Vector3fVector& cubes_centers,
@@ -709,27 +676,4 @@ Eigen::Vector3f WorldDownloadManager::floor3f(const Eigen::Vector3f & v)
   for (uint i = 0; i < 3; i++)
     r[i] = std::floor(v[i]);
   return r;
-}
-
-void WorldDownloadManager::fromTsdfToMessage(const TsdfCloud & in,kinfu_msgs::KinfuTsdfResponse::Ptr & resp)
-{
-  resp->tsdf_cloud.clear();
-
-  uint in_size = in.size();
-
-  resp->tsdf_cloud.reserve(in_size);
-
-  for (uint i = 0; i < in_size; i++)
-  {
-    const pcl::PointXYZI & s = in[i];
-
-    kinfu_msgs::KinfuTsdfPoint d;
-
-    d.x = s.x;
-    d.y = s.y;
-    d.z = s.z;
-    d.i = s.intensity;
-
-    resp->tsdf_cloud.push_back(d);
-  }
 }

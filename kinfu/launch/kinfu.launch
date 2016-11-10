@@ -11,7 +11,4 @@
     <param name="extract_known_points" value="true" />
   </node>
 
-  <node pkg="kinfu_output" type="kinfu_output" name="kinect_kinfu1_output" output="screen">
-    <param name="kinfu_response_topic" value="/kinfu1_response_topic" />
-  </node>
 </launch>

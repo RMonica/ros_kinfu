@@ -50,6 +50,9 @@
 #define PARAM_NAME_REQUEST_TOPIC         "request_topic"
 #define PARAM_DEFAULT_REQUEST_TOPIC      "/kinfu_request_topic"
 
+#define PARAM_NAME_REQUEST_ACTION_NAME    "request_action_name"
+#define PARAM_DEFAULT_REQUEST_ACTION_NAME "/kinfu_output/actions/request"
+
 #define PARAM_NAME_COMMAND_TOPIC         "command_topic"
 #define PARAM_DEFAULT_COMMAND_TOPIC      "/kinfu_command_topic"
 
@@ -59,6 +62,9 @@
 
 #define PARAM_NAME_FORCED_CURRENT_FRAME   "forced_tf_current_frame"
 #define PARAM_DEFAULT_FORCED_CURRENT_FRAME ""
+
+#define PARAM_NAME_REQUEST_ACTION_MAGIC   "kinfu_output_request_action_magic"
+#define PARAM_DEFAULT_REQUEST_ACTION_MAGIC "KINFU_OUTPUT_ACTION_MAGIC_SOURCE_NAME"
 
 // kinfu parameters
 #define PARAM_NAME_VOLUME_SIZE            "volume_size"

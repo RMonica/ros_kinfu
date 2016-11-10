@@ -1,5 +1,6 @@
 kinfu_msgs/KinfuTsdfRequest request
 ---
+KinfuRequestHeader tsdf_header
 std_msgs/Header header
 sensor_msgs/PointCloud2 pointcloud
 pcl_msgs/PolygonMesh mesh

@@ -2,9 +2,9 @@
 
 == INSTALLATION ==
 
-Since PCL does not support KinFu any more, the source code of KinFu was just copy-pasted in the pcl_kinfu_large_scale folder.
+Since PCL does not support KinFu anymore, the source code of KinFu was just copy-pasted into the pcl_kinfu_large_scale folder.
 This node now compiles like a common ROS node, except that:
-  - You need a working CUDA installation
-  - You need to rename the file cmake/KinfuTrigger.cmake.readme to KinfuTrigger.cmake
+  - You need a working CUDA installation and a CUDA-capable NVidia video card
+  - To enable the package, you have to rename cmake/KinfuTrigger.cmake.readme into KinfuTrigger.cmake
 
-2015 12 02
+2016 11 08

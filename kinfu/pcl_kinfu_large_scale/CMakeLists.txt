@@ -1,4 +1,4 @@
-option(CUDA_USE_STATIC_CUDA_RUNTIME OFF)
+set(CUDA_USE_STATIC_CUDA_RUNTIME OFF)
 find_package(CUDA REQUIRED)
 message(STATUS "kinfu: CUDA ${CUDA_VERSION} found.")
 

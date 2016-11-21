@@ -44,24 +44,12 @@ namespace pcl
   {
     namespace kinfuLS
     {
-      __device__ __forceinline__ float
-      getMinTime (const float3& volume_max, const float3& origin, const float3& dir)
+
+    /* ************************** */
+      __device__ __forceinline__ float3
+      float3_mul_elements(const float3 & a,const float3 & b)
       {
-        float txmin = ( (dir.x > 0 ? 0.f : volume_max.x) - origin.x) / dir.x;
-        float tymin = ( (dir.y > 0 ? 0.f : volume_max.y) - origin.y) / dir.y;
-        float tzmin = ( (dir.z > 0 ? 0.f : volume_max.z) - origin.z) / dir.z;
-
-        return fmax ( fmax (txmin, tymin), tzmin);
-      }
-
-      __device__ __forceinline__ float
-      getMaxTime (const float3& volume_max, const float3& origin, const float3& dir)
-      {
-        float txmax = ( (dir.x > 0 ? volume_max.x : 0.f) - origin.x) / dir.x;
-        float tymax = ( (dir.y > 0 ? volume_max.y : 0.f) - origin.y) / dir.y;
-        float tzmax = ( (dir.z > 0 ? volume_max.z : 0.f) - origin.z) / dir.z;
-
-        return fmin (fmin (txmax, tymax), tzmax);
+        return make_float3(a.x * b.x,a.y * b.y,a.z * b.z);
       }
 
       template <class StoreCondition,class StoreAction,class SearchCondition>
@@ -76,6 +64,7 @@ namespace pcl
         float3 volume_size;
 
         float3 cell_size;
+        float3 cell_size_inv;
         int cols, rows;
 
         mutable SearchCondition search_condition;
@@ -113,43 +102,60 @@ namespace pcl
         }
 
         __device__ __forceinline__ float
-        readTsdf (int x, int y, int z, pcl::gpu::kinfuLS::tsdf_buffer buffer) const
+        readTsdf (int x, int y, int z, const pcl::gpu::kinfuLS::tsdf_buffer & buffer) const
         {
-          const short2* tmp_pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
-          short2* pos = const_cast<short2*> (tmp_pos);
+          const short2* pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
           shift_tsdf_pointer(&pos, buffer);
           return unpack_tsdf (*pos);
         }
 
         __device__ __forceinline__ void
-        readTsdf (int x, int y, int z, pcl::gpu::kinfuLS::tsdf_buffer buffer,float& tsdf, int& weight) const
+        readTsdf (int x, int y, int z, const pcl::gpu::kinfuLS::tsdf_buffer & buffer,float& tsdf, int& weight) const
         {
-          const short2* tmp_pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
-          short2* pos = const_cast<short2*> (tmp_pos);
+          const short2* pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
           shift_tsdf_pointer(&pos, buffer);
           unpack_tsdf (*pos,tsdf,weight);
         }
 
-        __device__ __forceinline__ int3
-        getVoxel (float3 point) const
+        __device__ __forceinline__ float3
+        fromMetersToCells (const float3 & point) const
         {
-          int vx = __float2int_rd (point.x / cell_size.x);        // round to negative infinity
-          int vy = __float2int_rd (point.y / cell_size.y);
-          int vz = __float2int_rd (point.z / cell_size.z);
+          return float3_mul_elements(point,cell_size_inv);
+        }
+
+        __device__ __forceinline__ float3
+        fromCellsToMeters (const float3 & point) const
+        {
+          return float3_mul_elements(point,cell_size);
+        }
+
+        __device__ __forceinline__ int3
+        getVoxelFromPoint (float3 point) const
+        {
+          return getVoxelFromCell(fromMetersToCells(point));
+        }
+
+        __device__ __forceinline__ int3
+        getVoxelFromCell (const float3 & cell) const
+        {
+          int vx = __float2int_rd (cell.x);        // round to negative infinity
+          int vy = __float2int_rd (cell.y);
+          int vz = __float2int_rd (cell.z);
 
           return make_int3 (vx, vy, vz);
         }
 
         __device__ __forceinline__ float
-        interpolateTrilineary (const float3& origin, const float3& dir, float time, pcl::gpu::kinfuLS::tsdf_buffer buffer) const
+        interpolateTrilineary (const float3& point, const pcl::gpu::kinfuLS::tsdf_buffer & buffer) const
         {
-          return interpolateTrilineary (origin + dir * time, buffer);
+          const float3 cell = fromMetersToCells (point);
+          return interpolateTrilinearyFromCell (cell,buffer);
         }
 
         __device__ __forceinline__ float
-        interpolateTrilineary (const float3& point, pcl::gpu::kinfuLS::tsdf_buffer buffer) const
+        interpolateTrilinearyFromCell (const float3& cell, const pcl::gpu::kinfuLS::tsdf_buffer & buffer) const
         {
-          int3 g = getVoxel (point);
+          int3 g = getVoxelFromCell (cell);
 
           if (g.x <= 0 || g.x >= buffer.voxels_size.x - 1)
             return numeric_limits<float>::quiet_NaN ();
@@ -183,9 +189,9 @@ namespace pcl
                       readTsdf (g.x + 1, g.y + 1, g.z + 1, buffer) * a * b * c;
   */
           //NEW CODE
-          float a = point.x/ cell_size.x - (g.x + 0.5f); if (a<0) { g.x--; a+=1.0f; };
-          float b = point.y/ cell_size.y - (g.y + 0.5f); if (b<0) { g.y--; b+=1.0f; };
-          float c = point.z/ cell_size.z - (g.z + 0.5f); if (c<0) { g.z--; c+=1.0f; };
+          float a = cell.x - (g.x + 0.5f); if (a<0) { g.x--; a+=1.0f; };
+          float b = cell.y - (g.y + 0.5f); if (b<0) { g.y--; b+=1.0f; };
+          float c = cell.z - (g.z + 0.5f); if (c<0) { g.z--; c+=1.0f; };
 
           float res = (1 - a) * (
                                   (1 - b) * (
@@ -211,6 +217,24 @@ namespace pcl
           return res;
         }
 
+        __device__ void find_min_max_time(float3 ray_org, float3 ray_dir, float3 box_max, float &tnear, float &tfar) const
+        {
+          const float3 box_min = make_float3(0.f, 0.f, 0.f);
+
+          // compute intersection of ray with all six bbox planes
+          float3 invR = make_float3(1.f/ray_dir.x, 1.f/ray_dir.y, 1.f/ray_dir.z);
+          float3 tbot = float3_mul_elements(invR,box_min - ray_org);
+          float3 ttop = float3_mul_elements(invR,box_max - ray_org);
+
+          // re-order intersections to find smallest and largest on each axis
+          float3 tmin = make_float3(fminf(ttop.x, tbot.x), fminf(ttop.y, tbot.y), fminf(ttop.z, tbot.z));
+          float3 tmax = make_float3(fmaxf(ttop.x, tbot.x), fmaxf(ttop.y, tbot.y), fmaxf(ttop.z, tbot.z));
+
+          // find the largest tmin and the smallest tmax
+          tnear = fmaxf(fmaxf(tmin.x, tmin.y), fmaxf(tmin.x, tmin.z));
+          tfar  = fminf(fminf(tmax.x, tmax.y), fminf(tmax.x, tmax.z));
+        }
+
 
         __device__ __forceinline__ void
         operator () (pcl::gpu::kinfuLS::tsdf_buffer buffer) const
@@ -223,53 +247,52 @@ namespace pcl
 
           store_action.Init(*this,x,y);
 
-          float3 ray_start = tcurr;
+          const float3 ray_start = tcurr;
           float3 ray_dir = normalized (Rcurr * get_ray_next (x, y));
 
           //ensure that it isn't a degenerate case
-          //ray_dir.x = (ray_dir.x == 0.f) ? 1e-15 : ray_dir.x;
-          //ray_dir.y = (ray_dir.y == 0.f) ? 1e-15 : ray_dir.y;
-          //ray_dir.z = (ray_dir.z == 0.f) ? 1e-15 : ray_dir.z;
+          ray_dir.x = (ray_dir.x == 0.f) ? 1e-15 : ray_dir.x;
+          ray_dir.y = (ray_dir.y == 0.f) ? 1e-15 : ray_dir.y;
+          ray_dir.z = (ray_dir.z == 0.f) ? 1e-15 : ray_dir.z;
 
           // computer time when entry and exit volume
-          float time_start_volume = getMinTime (volume_size, ray_start, ray_dir);
-          float time_exit_volume = getMaxTime (volume_size, ray_start, ray_dir);
+          float time_start_volume;
+          float time_exit_volume;
+          find_min_max_time(ray_start,ray_dir,volume_size,time_start_volume,time_exit_volume);
 
           const float min_dist = 0.f;         //in meters
           time_start_volume = fmax (time_start_volume, min_dist);
           if (time_start_volume >= time_exit_volume)
             return;
+          time_exit_volume -= time_step;
 
           float time_curr = time_start_volume;
-          int3 g = getVoxel (ray_start + ray_dir * time_curr);
+          int3 g = getVoxelFromPoint (ray_start + ray_dir * time_curr);
           g.x = max (0, min (g.x, buffer.voxels_size.x - 1));
           g.y = max (0, min (g.y, buffer.voxels_size.y - 1));
           g.z = max (0, min (g.z, buffer.voxels_size.z - 1));
 
           float tsdf;
           int weight;
-          readTsdf(g.x, g.y, g.z, buffer, tsdf, weight);
-
-          float3 world_pt = ray_start + ray_dir * (time_curr + time_step);
+          readTsdf (g.x, g.y, g.z, buffer, tsdf, weight);
 
           //infinite loop guard
-          const float max_time = (volume_size.x + volume_size.y + volume_size.z);
+          const float max_time = fmin(time_exit_volume,3.0 * (volume_size.x + volume_size.y + volume_size.z));
 
           float curr_time_step = time_step;
 
           for (; time_curr < max_time; time_curr += curr_time_step)
           {
             float tsdf_prev = tsdf;
-            float weight_prev = weight;
-            float3 world_pt_prev = world_pt;
+            int weight_prev = weight;
 
-            world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
-            if (!checkCoords(world_pt))
+            const float3 world_pt = ray_start + ray_dir * (time_curr + time_step);
+            if (!checkCoords (world_pt))
               continue;
 
-            int3 g = getVoxel (world_pt);
+            g = getVoxelFromPoint (world_pt);
             if (!checkInds (g))
-              break;
+              return;
 
             readTsdf (g.x, g.y, g.z, buffer, tsdf, weight);
 
@@ -281,7 +304,6 @@ namespace pcl
                 {
                   tsdf = tsdf_prev;
                   weight = weight_prev;
-                  world_pt = world_pt_prev;
 
                   time_curr -= curr_time_step;
                   curr_time_step = new_time_step;
@@ -291,19 +313,21 @@ namespace pcl
             }
 
             if (tsdf_prev < 0.f && tsdf > 0.f)
-              break;
+              return;
 
             const bool zero_crossing = store_condition.Evaluate(tsdf_prev,tsdf,weight_prev,weight);
-            if (zero_crossing)
-            {
-              if (time_curr < min_range)
-                break;
+            if (zero_crossing && time_curr < min_range)
+              return;
 
-              store_action.Store(world_pt_prev,world_pt,g,tsdf,weight,time_curr,time_step,ray_start,ray_dir,
-                *this,x,y,buffer);
-              break;
-            }
-          }          /* for(;;)  */
+            if (zero_crossing)
+              break; // break out of the cycle here, so Stores will be executed in sync by all threads
+          }
+
+          const float3 world_pt_prev = ray_start + ray_dir * (time_curr);
+          const float3 world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
+
+          store_action.Store(world_pt_prev,world_pt,g,tsdf,weight,time_curr,time_step,ray_start,ray_dir,
+            *this,x,y,buffer);
         }
       };
 
@@ -389,7 +413,7 @@ namespace pcl
         template <class _RayCaster>
         __device__ __forceinline__ void Store(const float3 & world_pt_prev,const float3 & world_pt,
           const int3 & /*voxel_id*/,float /*tsdf*/,float weight,
-          float time_curr,float time_step,float3 & ray_start,float3 & ray_dir,
+          float time_curr,float time_step,const float3 & ray_start,const float3 & ray_dir,
           const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & buffer)
         {
           if (weight == 0)
@@ -406,7 +430,7 @@ namespace pcl
             return;
 
           if (abs(Ftdt - Ft) > 0.1)
-            step_correction = Ft / (Ftdt - Ft);
+            step_correction = __fdividef(Ft,Ftdt - Ft);
 
           float Ts = time_curr - time_step * step_correction;
 
@@ -471,7 +495,7 @@ namespace pcl
         template <class _RayCaster>
         __device__ __forceinline__ void Store(const float3 & /*world_pt_prev*/,const float3 & world_pt,
           const int3 & /*voxel_id*/,float /*tsdf*/,float weight,
-          float /*time_curr*/,float /*time_step*/,float3 & /*ray_start*/,float3 & /*ray_dir*/,
+          float /*time_curr*/,float /*time_step*/,const float3 & /*ray_start*/,const float3 & /*ray_dir*/,
           const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & /*buffer*/)
         {
           parent.vmap.ptr (y       )[x] = world_pt.x;
@@ -514,6 +538,9 @@ namespace pcl
         rc.cell_size.x = volume_size.x / buffer->voxels_size.x;
         rc.cell_size.y = volume_size.y / buffer->voxels_size.y;
         rc.cell_size.z = volume_size.z / buffer->voxels_size.z;
+        rc.cell_size_inv.x = 1.0 / rc.cell_size.x;
+        rc.cell_size_inv.y = 1.0 / rc.cell_size.y;
+        rc.cell_size_inv.z = 1.0 / rc.cell_size.z;
 
         rc.cols = vmap.cols ();
         rc.rows = vmap.rows () / 3;

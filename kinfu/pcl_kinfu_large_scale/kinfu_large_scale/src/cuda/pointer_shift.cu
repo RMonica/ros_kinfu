@@ -1,7 +1,8 @@
 #include <pcl/gpu/kinfu_large_scale/tsdf_buffer.h>
 
-__device__ __forceinline__ static void
-shift_tsdf_pointer(short2 ** value, pcl::gpu::kinfuLS::tsdf_buffer buffer)
+template <typename T>
+__device__ __forceinline__ void
+shift_tsdf_pointer(T ** value, const pcl::gpu::kinfuLS::tsdf_buffer & buffer)
 {
   ///Shift the pointer by (@origin - @start)
   *value += (buffer.tsdf_rolling_buff_origin - buffer.tsdf_memory_start);

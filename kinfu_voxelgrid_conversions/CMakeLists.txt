@@ -78,6 +78,12 @@ target_link_libraries(kinfu_voxelgrid_conversions
 ## Install ##
 #############
 
+install(TARGETS kinfu_voxelgrid_conversions
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 #############
 ## Testing ##
 #############

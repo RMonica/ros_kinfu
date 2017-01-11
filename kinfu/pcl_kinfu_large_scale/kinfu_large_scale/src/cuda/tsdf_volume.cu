@@ -969,7 +969,7 @@ namespace pcl
         while (oldZ < 0)
           oldZ += buffer->voxels_size.z;
         while (oldZ >= buffer->voxels_size.z)
-          oldZ += buffer->voxels_size.z;
+          oldZ -= buffer->voxels_size.z;
 
         //Z
         minBounds.z = oldZ;

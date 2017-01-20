@@ -1,5 +1,5 @@
 macro(REMOVE_VTK_DEFINITIONS)
-    get_directory_property(_dir_defs DIRECTORY ${CMAKE_SOURCE_DIR} COMPILE_DEFINITIONS)
+    get_directory_property(_dir_defs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} COMPILE_DEFINITIONS)
     set(_vtk_definitions)
     foreach(_item ${_dir_defs})
         if(_item MATCHES "vtk*")

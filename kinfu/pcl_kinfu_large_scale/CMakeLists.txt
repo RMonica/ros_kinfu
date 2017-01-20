@@ -1,4 +1,3 @@
-set(CUDA_USE_STATIC_CUDA_RUNTIME OFF)
 find_package(CUDA REQUIRED)
 message(STATUS "kinfu: CUDA ${CUDA_VERSION} found.")
 
@@ -47,8 +46,9 @@ add_library(
   kinfu_large_scale/src/world_model.cpp
   )
 
-target_link_libraries(
-  KinfuLargeScaleCPP ${PCL_LIBRARIES}
+target_link_libraries(KinfuLargeScaleCPP
+  ${PCL_LIBRARIES}
+  ${CUDA_LIBRARIES}
   )
 
 set(CUDA_NVCC_FLAGS "-D_FORCE_INLINES -gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_52,code=sm_52")
@@ -72,8 +72,14 @@ cuda_add_library(KinfuLargeScaleCUDA
   kinfu_large_scale/src/cuda/tsdf_volume.cu
   )
 
-target_link_libraries(
-  KinfuLargeScaleCUDA ${PCL_LIBRARIES}
+target_link_libraries(KinfuLargeScaleCUDA
+  ${PCL_LIBRARIES}
+  ${CUDA_LIBRARIES}
   )
 
-set(KinfuLargeScale_LIBRARIES KinfuLargeScaleCPP KinfuLargeScaleCUDA PARENT_SCOPE)
+set(KinfuLargeScale_LIBRARIES
+  KinfuLargeScaleCPP
+  KinfuLargeScaleCUDA
+  ${PCL_LIBRARIES}
+  ${CUDA_LIBRARIES}
+  PARENT_SCOPE)

@@ -9,8 +9,15 @@ bool request_reset
 bool request_transformation
 KinfuPose transformation
 
-# if true, points and/or triangles outside this bounding box will be removed
-# this is applied after the transformation above
+# If request_bounding_box, the mesh/cloud is cropped before publishing.
+# bounding_box_min and bounding_box_max define a minimum and maximum value
+# for each point coordinate, i.e. the bounding box.
+# Only points/triangles inside the bounding box are published.
+# The transformation (from request_transformation above) is applied before
+# cropping.
+# Note that this option is only useful to reduce ROS message size. In
+# the current implementation, KinFu always processes the whole point cloud,
+# even if only a part is needed.
 bool request_bounding_box
 KinfuCloudPoint bounding_box_min
 KinfuCloudPoint bounding_box_max
@@ -35,7 +42,7 @@ KinfuCloudPoint bounding_box_view_max
 # for REQUEST_TYPE_GET_VIEW, distance from the sensor to the center of the TSDF volume
 float32 tsdf_center_distance
 
-# for REQUEST_TYPE_GET_VIEW, uint32 REQUEST_TYPE_GET_VIEW_CLOUD, REQUEST_TYPE_GET_VOXEL_COUNT
+# for REQUEST_TYPE_GET_VIEW, REQUEST_TYPE_GET_VIEW_CLOUD, REQUEST_TYPE_GET_VOXEL_COUNT
 bool request_camera_intrinsics
 KinfuCameraIntrinsics camera_intrinsics
 

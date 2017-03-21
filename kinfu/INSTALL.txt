@@ -5,6 +5,13 @@
 Since PCL does not support KinFu anymore, the source code of KinFu was just copy-pasted into the pcl_kinfu_large_scale folder.
 This node now compiles like a common ROS node, except that:
   - You need a working CUDA installation and a CUDA-capable NVidia video card (minimum Compute Capability: 3.0)
-  - To enable the package, you have to rename cmake/KinfuTrigger.cmake.readme into KinfuTrigger.cmake
+  - To enable the package, you have to rename cmake/KinfuTrigger.cmake.readme into cmake/KinfuTrigger.cmake
 
-2016 11 08
+== KNOWN ISSUES ==
+
+- Malfunctions have been reported when compiling without optimizations, which unfortunately is the default for catkin_make.
+  Make sure optimizations are enabled for your workspace. Examples:
+    For catkin_make: $ catkin_make -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    For catkin build: $ catkin build --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+2017 03 18

@@ -447,7 +447,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchSliceAsPointCloud (DeviceArray<PointType>& c
 
       const size_t old_size = current_slice_intensities->size();
       current_slice_intensities->points.resize (old_size + downloaded_size);
-      for(int i = 0 ; i < intensities_vector_inc.size () ; ++i)
+      for(size_t i = 0 ; i < intensities_vector_inc.size () ; ++i)
         current_slice_intensities->points[i + old_size].intensity = intensities_vector_inc[i];
       current_slice_intensities->width = (int) old_size + downloaded_size;
       current_slice_intensities->height = 1;

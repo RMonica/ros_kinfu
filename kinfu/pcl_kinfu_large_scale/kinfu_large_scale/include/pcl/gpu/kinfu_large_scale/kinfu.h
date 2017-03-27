@@ -435,6 +435,9 @@ namespace pcl
           /** \brief Helper function that copies v_maps_curr and n_maps_curr to v_maps_prev_ and n_maps_prev_ */
           inline void 
           saveCurrentMaps();
+
+          /** \brief For small rounding errors */
+          void normalizeRotationMatrix(Matrix3frm & rotation) const;
           
           /** \brief Cyclical buffer object */
           CyclicalBuffer cyclical_;

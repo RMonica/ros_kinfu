@@ -757,6 +757,8 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
   }
 
   ///////////////////////////////////////////////////////////////////////////////////////////
+  normalizeRotationMatrix(rmats_[global_time_ - 1]);
+
   // Iterative Closest Point
   // Get the last-known pose
   Matrix3frm last_known_global_rotation = has_hint ? Matrix3frm(hint.transform.rotation()) : rmats_[global_time_ - 1];
@@ -868,7 +870,6 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
   if(has_shifted_ && perform_last_scan_)
     extractAndSaveWorld ();
 
-    
   ++global_time_;
   // save current vertex and normal maps
   saveCurrentMaps ();
@@ -1000,6 +1001,16 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth, const View& 
   }
 
   return res;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void pcl::gpu::kinfuLS::KinfuTracker::normalizeRotationMatrix(Matrix3frm & rotation) const
+{
+  rotation.col(0).normalize(); // normalize x
+  rotation.col(1) = (rotation.col(1) - (rotation.col(0) * rotation.col(0).dot(rotation.col(1)))).normalized();
+    // project y onto plane perpendicular to x
+  rotation.col(2) = rotation.col(0).cross(rotation.col(1)); // generate z as cross product
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -51,7 +51,7 @@ target_link_libraries(KinfuLargeScaleCPP
   ${CUDA_LIBRARIES}
   )
 
-set(CUDA_NVCC_FLAGS "-D_FORCE_INLINES -gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_52,code=sm_52")
+set(CUDA_NVCC_FLAGS "-D_FORCE_INLINES -gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_52,code=sm_52 -gencode arch=compute_60,code=sm_60 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_62,code=sm_62")
 set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} "--ftz=true --prec-div=false --prec-sqrt=false")	
 set(CUDA_VERBOSE_BUILD OFF)
 cuda_add_library(KinfuLargeScaleCUDA

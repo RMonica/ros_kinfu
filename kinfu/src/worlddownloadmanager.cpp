@@ -295,7 +295,7 @@ void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdf
   }
 
   ROS_INFO("kinfu: Applying transformation...");
-  pcl::transformPointCloud(*cloud,*cloud,transformation);
+  pcl::transformPointCloudWithNormals(*cloud,*cloud,transformation);
 
   // if needed, crop
   if (req->request_bounding_box)
@@ -440,7 +440,7 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   }
 
   ROS_INFO("kinfu: Applying transformation...");
-  pcl::transformPointCloud(*cloud,*cloud,transformation);
+  pcl::transformPointCloudWithNormals(*cloud,*cloud,transformation);
 
   // if needed, crop
   if (req->request_bounding_box)

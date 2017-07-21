@@ -84,13 +84,16 @@
 
 #define PARAM_NAME_EXTRACT_TEXTURES       "extract_textures"
 #define PARAM_SNAME_EXTRACT_TEXTURES      "et"
-#define PARAM_DEFAULT_EXTRACT_TEXTURES    (bool(false))
+#define PARAM_DEFAULT_EXTRACT_TEXTURES    (bool(false))  // NOT IMPLEMENTED
 
 #define PARAM_NAME_DEPTH_WIDTH            "depth_width"
 #define PARAM_DEFAULT_DEPTH_WIDTH         640
 
 #define PARAM_NAME_DEPTH_HEIGHT           "depth_height"
 #define PARAM_DEFAULT_DEPTH_HEIGHT        480
+
+#define PARAM_NAME_MARCHING_CUBE_SIZE     "marching_cubes_volume_size"
+#define PARAM_DEFAULT_MARCHING_CUBE_SIZE  0 // if 0, VOLUME_X (512) will be used
 
 // if true, the kinfu engine will start automatically
 // otherwise, it will wait for a COMMAND_TYPE_RESUME

@@ -294,15 +294,15 @@ bool WorldDownloadManager::marchingCubes(TsdfCloud::Ptr cloud, std::vector<Mesh:
     std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> > transforms;
 
     //Get world as a vector of cubes
-    wm.getWorldAsCubes (pcl::device::kinfuLS::VOLUME_X, clouds, transforms, 0.025); // 2.5% overlapp (12 cells with a 512-wide cube)
+    wm.getWorldAsCubes (m_marching_cubes_volume_size, clouds, transforms, 0.025); // 2.5% overlapp (12 cells with a 512-wide cube)
 
     //Creating the standalone marching cubes instance
-    float volume_size = pcl::device::kinfuLS::VOLUME_SIZE;
+    float volume_size = pcl::device::kinfuLS::VOLUME_SIZE / pcl::device::kinfuLS::VOLUME_X * m_marching_cubes_volume_size;
 
     std::cout << "Processing world with volume size set to " << volume_size << "meters\n";
 
-    pcl::gpu::kinfuLS::StandaloneMarchingCubes<pcl::PointXYZI> marching_cubes (pcl::device::kinfuLS::VOLUME_X,
-      pcl::device::kinfuLS::VOLUME_Y, pcl::device::kinfuLS::VOLUME_Z, volume_size);
+    pcl::gpu::kinfuLS::StandaloneMarchingCubes<pcl::PointXYZI> marching_cubes (m_marching_cubes_volume_size,
+      m_marching_cubes_volume_size, m_marching_cubes_volume_size, volume_size);
 
     marching_cubes.getMeshesFromTSDFVectorMemory(clouds,transforms,output_meshes);
 

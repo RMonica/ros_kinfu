@@ -62,7 +62,6 @@ pcl::gpu::kinfuLS::MarchingCubes::run(const TsdfVolume& tsdf, DeviceArray<PointT
 {  
   if (triangles_buffer.empty())
     triangles_buffer.create(DEFAULT_TRIANGLES_BUFFER_SIZE);
-  occupied_voxels_buffer_.create(3, triangles_buffer.size() / 3);
   if (normal_buffer.empty())
     normal_buffer.create(triangles_buffer.size());
 

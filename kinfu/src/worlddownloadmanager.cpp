@@ -52,6 +52,8 @@ WorldDownloadManager::WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex
   m_incomplete_points_listener = TIncompletePointsListener::Ptr(new TIncompletePointsListener);
 
   m_reverse_initial_transformation = Eigen::Affine3f::Identity();
+
+  m_marching_cubes_volume_size = pcl::device::kinfuLS::VOLUME_X;
 }
 
 WorldDownloadManager::~WorldDownloadManager()

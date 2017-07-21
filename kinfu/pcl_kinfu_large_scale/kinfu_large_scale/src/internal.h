@@ -199,7 +199,7 @@ namespace pcl
         *  \param[out] array volume to be initialized
         */
       PCL_EXPORTS void
-      initVolume(PtrStep<short2> array);
+      initVolume(int3 voxels_size,PtrStep<short2> array);
 
       /**
        * @brief clear a sphere in a tsdf volume
@@ -408,6 +408,14 @@ namespace pcl
         */
       PCL_EXPORTS void
       getDataTransferCompletionMatrixSize(size_t & height, size_t & width);
+
+      /** \brief Returns the size of the data transfer matrix required by extractSliceAsCloud
+        * \param[in] the volume size in voxels
+        * \param[out] height the height of the matrix
+        * \param[out] width the width of the matrix, in number of (integer) elements
+        */
+      PCL_EXPORTS void
+      getDataTransferCompletionMatrixSize(const int3 & voxels_size,size_t & height, size_t & width);
 
       PCL_EXPORTS size_t
       extractIncompletePointsAsCloud (const PtrStep<short2>& volume, const float3& volume_size,

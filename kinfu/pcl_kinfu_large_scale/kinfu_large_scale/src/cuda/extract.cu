@@ -416,6 +416,17 @@ namespace pcl
 
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+      void
+      getDataTransferCompletionMatrixSize(const int3 & voxels_size,size_t & height, size_t & width)
+      {
+        dim3 block (FullScan6::CTA_SIZE_X, FullScan6::CTA_SIZE_Y);
+        dim3 grid (divUp (voxels_size.x, block.x), divUp (voxels_size.y, block.y));
+        width = grid.x;
+        height = grid.y;
+      }
+
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
       size_t
       extractIncompletePointsAsCloud (const PtrStep<short2>& volume, const float3& volume_size,
                            const pcl::gpu::kinfuLS::tsdf_buffer* buffer,const bool edges_only,

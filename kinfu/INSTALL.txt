@@ -14,4 +14,11 @@ This node now compiles like a common ROS node, except that:
     For catkin_make: $ catkin_make -DCMAKE_BUILD_TYPE=RelWithDebInfo
     For catkin build: $ catkin build --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
-2017 03 18
+- Out of memory errors have been reported during extraction.
+  Unfortunately, the GPU RAM usage during marching cubes increases significantly.
+  The command "nvidia-smi" may help you monitor your GPU memory usage.
+  Workarounds:
+  - Decrease the VOLUME_X, VOLUME_Y and VOLUME_Z parameters in device.h (at the expense of global resolution).
+  - Set the ROS parameter "marching_cubes_volume_size" to less than VOLUME_X (at the expense of marching cubes speed).
+
+2017 07 21

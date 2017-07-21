@@ -285,7 +285,7 @@ namespace pcl
         tg.rolling_buffer = buffer;
 
         dim3 block (FullScan6::CTA_SIZE_X,FullScan6::CTA_SIZE_Y);
-        dim3 grid (divUp (VOLUME_X, block.x), divUp (VOLUME_Y, block.y));
+        dim3 grid (divUp (buffer.voxels_size.x, block.x), divUp (buffer.voxels_size.y, block.y));
 
         tg.init_globals();
 

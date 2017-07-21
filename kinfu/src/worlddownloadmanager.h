@@ -118,6 +118,8 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
 
   void setReferenceFrameName(std::string n) {m_reference_frame_name = n; }
 
+  void setMarchingCubesVolumeSize(int size) {m_marching_cubes_volume_size = size; }
+
   TWeightCubeListener::Ptr getWeightCubeListener() {return m_cube_listener; }
 
   TIncompletePointsListener::Ptr getIncompletePointsListener() {return m_incomplete_points_listener; }
@@ -228,6 +230,8 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
   boost::condition_variable m_kinfu_waiting_cond;
 
   bool m_is_shutting_down;
+
+  int m_marching_cubes_volume_size;
 
   KinfuTracker * m_kinfu;
 

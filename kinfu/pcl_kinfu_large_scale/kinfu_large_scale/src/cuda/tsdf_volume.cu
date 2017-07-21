@@ -46,19 +46,19 @@ namespace pcl
     {
       template<typename T>
       __global__ void
-      initializeVolume (PtrStep<T> volume)
+      initializeVolume (int3 voxels_size,PtrStep<T> volume)
       {
         int x = threadIdx.x + blockIdx.x * blockDim.x;
         int y = threadIdx.y + blockIdx.y * blockDim.y;
         
         
-        if (x < VOLUME_X && y < VOLUME_Y)
+        if (x < voxels_size.x && y < voxels_size.y)
         {
             T *pos = volume.ptr(y) + x;
-            int z_step = VOLUME_Y * volume.step / sizeof(*pos);
+            int z_step = voxels_size.y * volume.step / sizeof(*pos);
 
   #pragma unroll
-            for(int z = 0; z < VOLUME_Z; ++z, pos+=z_step)
+            for(int z = 0; z < voxels_size.z; ++z, pos+=z_step)
               pack_tsdf (0.f, 0, *pos);
         }
       }
@@ -228,14 +228,14 @@ namespace pcl
       } // clearSliceKernel
    
       void
-      initVolume (PtrStep<short2> volume)
+      initVolume (int3 voxels_size,PtrStep<short2> volume)
       {
         dim3 block (16, 16);
         dim3 grid (1, 1, 1);
-        grid.x = divUp (VOLUME_X, block.x);      
-        grid.y = divUp (VOLUME_Y, block.y);
+        grid.x = divUp (voxels_size.x, block.x);
+        grid.y = divUp (voxels_size.y, block.y);
 
-        initializeVolume<<<grid, block>>>(volume);
+        initializeVolume<<<grid, block>>>(voxels_size,volume);
         cudaSafeCall ( cudaGetLastError () );
         cudaSafeCall (cudaDeviceSynchronize ());
       }

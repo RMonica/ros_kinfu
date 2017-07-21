@@ -48,7 +48,7 @@ namespace pcl
         fetch (int x, int y, int z, int& weight) const
         {
           float tsdf;
-          const short2* tmp_pos = &(volume.ptr (VOLUME_Y * z + y)[x]);
+          const short2* tmp_pos = &(volume.ptr (rolling_buffer.voxels_size.y * z + y)[x]);
           short2* pos = const_cast<short2*> (tmp_pos);
           unpack_tsdf (*pos, tsdf, weight);
 
@@ -79,7 +79,7 @@ namespace pcl
           const int ftid = Block::flattenedThreadId ();
           __shared__ int cta_buffer[CTA_SIZE];
 
-          int maximum_Z = VOLUME_Z - EXTRACTOR::MIN_Z_MARGIN;
+          int maximum_Z = rolling_buffer.voxels_size.z - EXTRACTOR::MIN_Z_MARGIN;
           // find min valid z for this thread
           bool valid_xy = (x >= EXTRACTOR::MIN_X_MARGIN) && (y >= EXTRACTOR::MIN_Y_MARGIN) &&
             (x < rolling_buffer.voxels_size.x - EXTRACTOR::MIN_X_MARGIN) && (y < rolling_buffer.voxels_size.y - EXTRACTOR::MIN_Y_MARGIN);

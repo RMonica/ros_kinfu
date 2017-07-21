@@ -63,7 +63,7 @@ namespace pcl
         enum
         { 
           POINTS_PER_TRIANGLE = 3,
-          DEFAULT_TRIANGLES_BUFFER_SIZE = 2 * 1000 * 1000 * POINTS_PER_TRIANGLE * 2
+          DEFAULT_TRIANGLES_BUFFER_SIZE = 1000 * 1000 * POINTS_PER_TRIANGLE
         };
       
         /** \brief Point type. */
@@ -96,9 +96,6 @@ namespace pcl
         
         /** \brief Triangles table for marching cubes  */
         DeviceArray<int> triTable_;     
-        
-        /** \brief Temporary buffer used by marching cubes (first row stores occuped voxes id, second number of vetexes, third poits offsets */
-        DeviceArray2D<int> occupied_voxels_buffer_;
       };
     }
   }

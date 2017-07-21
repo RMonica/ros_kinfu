@@ -722,6 +722,11 @@ struct KinFuLSApp
     ROS_INFO("kinfu: frontier points extraction enabled.");
   }
 
+  void setMarchingCubesVolumeSize(int size)
+  {
+    m_world_download_manager.setMarchingCubesVolumeSize(size);
+  }
+
   void setSnapshotRate(int frame_count)
   {
     snapshot_rate_ = frame_count;
@@ -854,6 +859,11 @@ int main(int argc, char* argv[])
   nh.getParam(PARAM_NAME_EXTRACT_FRONTIER_POINTS,extract_frontier_points);
   if (extract_frontier_points)
     app.enableExtractFrontierPoints();
+
+  int marching_cubes_volume_size = PARAM_DEFAULT_MARCHING_CUBE_SIZE;
+  nh.getParam(PARAM_NAME_MARCHING_CUBE_SIZE,marching_cubes_volume_size);
+  if (marching_cubes_volume_size > 0)
+    app.setMarchingCubesVolumeSize(marching_cubes_volume_size);
 
   // start app main thread
   app.start();

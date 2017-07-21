@@ -342,9 +342,8 @@ pcl::gpu::kinfuLS::StandaloneMarchingCubes<PointT>::runMarchingCubes ()
   DeviceArray2D<int> last_data_transfer_matrix;
   {
     size_t height, width;
-    pcl::device::kinfuLS::getDataTransferCompletionMatrixSize (height, width);
-    if (last_data_transfer_matrix.empty ())
-      last_data_transfer_matrix.create (height, width);
+    pcl::device::kinfuLS::getDataTransferCompletionMatrixSize (make_int3(voxels_x_, voxels_y_, voxels_z_), height, width);
+    last_data_transfer_matrix.create (height, width);
     cudaSafeCall ( cudaMemset2D (last_data_transfer_matrix.ptr(), last_data_transfer_matrix.step(), 0,
                                width * sizeof(int), height));
     cudaSafeCall ( cudaGetLastError () );

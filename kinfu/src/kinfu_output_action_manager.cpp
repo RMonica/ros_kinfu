@@ -46,7 +46,7 @@ RequestActionManager::RequestActionManager(ros::NodeHandle & nh,KinfuOutputIAnsw
   m_server->start();
   }
 
-void RequestActionManager::onNewGoal(GoalHandle & goal_handle)
+void RequestActionManager::onNewGoal(GoalHandle goal_handle)
   {
     kinfu_msgs::KinfuTsdfRequestPtr request_msg;
 

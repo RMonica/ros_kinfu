@@ -51,6 +51,8 @@ CommandSubscriber::CommandSubscriber(ros::NodeHandle &nh, tf::TransformListener 
   m_is_triggered = false;
   m_hint_expiration = ros::Time(0);
 
+  m_nh.param<bool>(PARAM_NAME_FORCED_TF_POSITION,m_forced_tf_frames,PARAM_DEFAULT_FORCED_TF_POSITION);
+
   m_initial_transformation = Eigen::Affine3f::Identity();
 
   m_command_subscriber = m_nh.subscribe(m_command_topic_name,5,&CommandSubscriber::commandCallback,this);

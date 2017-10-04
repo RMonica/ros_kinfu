@@ -74,7 +74,7 @@ class RequestActionManager
   bool HandleResponse(const kinfu_msgs::RequestResult & resp);
 
   private:
-  void onNewGoal(GoalHandle & goal_handle);
+  void onNewGoal(GoalHandle goal_handle);
   uint getNewId();
 
   ros::NodeHandle & m_nh;

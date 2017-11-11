@@ -65,53 +65,31 @@ pcl::kinfuLS::WorldModel<PointT>::getExistingData(const double previous_origin_x
   double newLimitX = newOriginX + volume_x; 
   double newLimitY = newOriginY + volume_y; 
   double newLimitZ = newOriginZ + volume_z;
-	
-  // filter points in the space of the new cube
-  PointCloudPtr newCube (new pcl::PointCloud<PointT>);
-  // condition
-  ConditionAndPtr range_condAND (new pcl::ConditionAnd<PointT> ());
-  range_condAND->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::GE, newOriginX)));
-  range_condAND->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::LT, newLimitX)));
-  range_condAND->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::GE, newOriginY)));
-  range_condAND->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::LT, newLimitY)));
-  range_condAND->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::GE, newOriginZ)));
-  range_condAND->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::LT, newLimitZ))); 
-  
-  // build the filter
-  pcl::ConditionalRemoval<PointT> condremAND (true);
-  condremAND.setCondition (range_condAND);
-  condremAND.setInputCloud (world_);
-  condremAND.setKeepOrganized (false);
-  
-  // apply filter
-  condremAND.filter (*newCube);
-	
-  // filter points that belong to the new slice
-  ConditionOrPtr range_condOR (new pcl::ConditionOr<PointT> ());
-  
-  if(offset_x >= 0)
-	range_condOR->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::GE,  previous_origin_x + volume_x - 1.0 )));
-  else
-	range_condOR->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::LT,  previous_origin_x )));
-	
-  if(offset_y >= 0)
-	range_condOR->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::GE,  previous_origin_y + volume_y - 1.0 )));
-  else
-	range_condOR->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::LT,  previous_origin_y )));
-	
-  if(offset_z >= 0)
-	range_condOR->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::GE,  previous_origin_z + volume_z - 1.0 )));
-  else
-	range_condOR->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::LT,  previous_origin_z )));
-  
-  // build the filter
-  pcl::ConditionalRemoval<PointT> condrem (true);
-  condrem.setCondition (range_condOR);
-  condrem.setInputCloud (newCube);
-  condrem.setKeepOrganized (false);
-  // apply filter
-  condrem.filter (existing_slice);  
- 
+
+  existing_slice.clear();
+  {
+    const size_t world_size = world_->size();
+    for (size_t i = 0; i < world_size; i++)
+    {
+      const PointT & ipt = (*world_)[i];
+      if (ipt.x >= newOriginX && ipt.x < newLimitX &&
+          ipt.y >= newOriginY && ipt.y < newLimitY &&
+          ipt.z >= newOriginZ && ipt.z < newLimitZ)
+        {
+          if ((offset_x >= 0 && ipt.x >= previous_origin_x + volume_x - 1.0) ||
+              (offset_x < 0 && ipt.x < previous_origin_x) ||
+              (offset_y >= 0 && ipt.y >= previous_origin_y + volume_y - 1.0) ||
+              (offset_y < 0 && ipt.y < previous_origin_y) ||
+              (offset_z >= 0 && ipt.z >= previous_origin_z + volume_z - 1.0) ||
+              (offset_z < 0 && ipt.z < previous_origin_z)
+              )
+            existing_slice.push_back(ipt);
+        }
+    }
+    existing_slice.height = 1;
+    existing_slice.width = existing_slice.size();
+  }
+
   if(existing_slice.points.size () != 0)
   {
 	//transform the slice in new cube coordinates
@@ -200,23 +178,15 @@ pcl::kinfuLS::WorldModel<PointT>::getWorldAsCubes (const double size, std::vecto
 		// pointcloud for current cube.
 		PointCloudPtr box (new pcl::PointCloud<PointT>);
 
-
-		// set conditional filter
-		ConditionAndPtr range_cond (new pcl::ConditionAnd<PointT> ());
-		range_cond->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::GE, origin.x)));
-		range_cond->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::LT, origin.x + cubeSide)));
-		range_cond->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::GE, origin.y)));
-		range_cond->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::LT, origin.y + cubeSide)));
-		range_cond->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::GE, origin.z)));
-		range_cond->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::LT, origin.z + cubeSide)));
-
-		// build the filter
-		pcl::ConditionalRemoval<PointT> condrem;
-		condrem.setCondition (range_cond);
-		condrem.setInputCloud (world_);
-		condrem.setKeepOrganized(false);
-		// apply filter
-		condrem.filter (*box);
+                const size_t world_size = world_->size();
+                for (size_t i = 0; i < world_size; i++)
+                {
+                  const PointT & ipt = (*world_)[i];
+                  if (ipt.x >= origin.x && ipt.x < origin.x + cubeSide &&
+                      ipt.y >= origin.y && ipt.y < origin.y + cubeSide &&
+                      ipt.z >= origin.z && ipt.z < origin.z + cubeSide)
+                    box->push_back(ipt);
+                }
 
 		// also push transform along with points.
 		if(box->points.size() > 0)
@@ -303,33 +273,7 @@ pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const d
 	lower_limit_x = new_limit_x;
 	upper_limit_x = previous_limit_x;    
   }
-  
-  // PCL_DEBUG ("Limit X: [%f - %f]\n", lower_limit_x, upper_limit_x);
-  
-  ConditionOrPtr range_cond_OR_x (new pcl::ConditionOr<PointT> ());
-  range_cond_OR_x->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::GE,  upper_limit_x ))); // filtered dimension
-  range_cond_OR_x->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::LT,  lower_limit_x ))); // filtered dimension
-	
-  range_cond_OR_x->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::GE,  previous_limit_y)));
-  range_cond_OR_x->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::LT,  previous_origin_y )));
-	
-  range_cond_OR_x->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::GE,  previous_limit_z)));
-  range_cond_OR_x->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::LT,  previous_origin_z )));
 
-  pcl::ConditionalRemoval<PointT> condrem_x (true);
-  condrem_x.setCondition (range_cond_OR_x);
-  condrem_x.setInputCloud (world_);
-  condrem_x.setKeepOrganized (false);
-  // apply filter
-  condrem_x.filter (*slice);  
-  IndicesConstPtr indices_x = condrem_x.getRemovedIndices ();
-  
-  //set outliers (so our slice points) to nan
-  setIndicesAsNans(world_, indices_x);
-  
-  // PCL_DEBUG("%d points set to nan on X\n", indices_x->size ());
-  
-  // get points of slice on Y (we actually set a negative filter and set the ouliers (so, our slice points) to nan)
   double lower_limit_y, upper_limit_y;
   if(offset_y >=0)
   {
@@ -341,32 +285,7 @@ pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const d
 	lower_limit_y = new_limit_y;
 	upper_limit_y = previous_limit_y;    
   }
-  
-  // PCL_DEBUG ("Limit Y: [%f - %f]\n", lower_limit_y, upper_limit_y);
-  
-  ConditionOrPtr range_cond_OR_y (new pcl::ConditionOr<PointT> ());
-  range_cond_OR_y->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::GE,  previous_limit_x )));
-  range_cond_OR_y->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::LT,  previous_origin_x )));
-	
-  range_cond_OR_y->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::GE,  upper_limit_y))); // filtered dimension
-  range_cond_OR_y->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::LT,  lower_limit_y ))); // filtered dimension
-	
-  range_cond_OR_y->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::GE,  previous_limit_z)));
-  range_cond_OR_y->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::LT,  previous_origin_z )));
 
-  pcl::ConditionalRemoval<PointT> condrem_y (true);
-  condrem_y.setCondition (range_cond_OR_y);
-  condrem_y.setInputCloud (world_);
-  condrem_y.setKeepOrganized (false);
-  // apply filter
-  condrem_y.filter (*slice);  
-  IndicesConstPtr indices_y = condrem_y.getRemovedIndices ();
-  
-  //set outliers (so our slice points) to nan
-  setIndicesAsNans(world_, indices_y);
-  // PCL_DEBUG ("%d points set to nan on Y\n", indices_y->size ());
-  
-  // get points of slice on Z (we actually set a negative filter and set the ouliers (so, our slice points) to nan)
   double lower_limit_z, upper_limit_z;
   if(offset_z >=0)
   {
@@ -378,32 +297,48 @@ pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const d
 	lower_limit_z = new_limit_z;
 	upper_limit_z = previous_limit_z;    
   }
-  
-  // PCL_DEBUG ("Limit Z: [%f - %f]\n", lower_limit_z, upper_limit_z);
-  
-  ConditionOrPtr range_cond_OR_z (new pcl::ConditionOr<PointT> ());
-  range_cond_OR_z->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::GE,  previous_limit_x )));
-  range_cond_OR_z->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("x", pcl::ComparisonOps::LT,  previous_origin_x )));
-	
-  range_cond_OR_z->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::GE,  previous_limit_y)));
-  range_cond_OR_z->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("y", pcl::ComparisonOps::LT,  previous_origin_y )));
-	
-  range_cond_OR_z->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::GE,  upper_limit_z))); // filtered dimension
-  range_cond_OR_z->addComparison (FieldComparisonConstPtr (new pcl::FieldComparison<PointT> ("z", pcl::ComparisonOps::LT,  lower_limit_z ))); // filtered dimension
 
-  pcl::ConditionalRemoval<PointT> condrem_z (true);
-  condrem_z.setCondition (range_cond_OR_z);
-  condrem_z.setInputCloud (world_);
-  condrem_z.setKeepOrganized (false);
-  // apply filter
-  condrem_z.filter (*slice);  
-  IndicesConstPtr indices_z = condrem_z.getRemovedIndices ();
-  
-  //set outliers (so our slice points) to nan
-  setIndicesAsNans(world_, indices_z);
-  // PCL_DEBUG("%d points set to nan on Z\n", indices_z->size ());
-  
-  
+  {
+    const size_t world_size = world_->size();
+    for (size_t i = 0; i < world_size; i++)
+    {
+      PointT & ipt = (*world_)[i];
+      bool removed = false;
+      if (!(
+          ipt.x >= upper_limit_x ||
+          ipt.x < lower_limit_x ||
+          ipt.y >= previous_limit_y ||
+          ipt.y < previous_origin_y ||
+          ipt.z >= previous_limit_z ||
+          ipt.z < previous_origin_z
+          ))
+        removed = true;
+      if (!(
+          ipt.x >= previous_limit_x ||
+          ipt.x < previous_origin_x ||
+          ipt.y >= upper_limit_y ||
+          ipt.y < lower_limit_y ||
+          ipt.z >= previous_limit_z ||
+          ipt.z < previous_origin_z
+          ))
+        removed = true;
+      if (!(
+          ipt.x >= previous_limit_x ||
+          ipt.x < previous_origin_x ||
+          ipt.y >= previous_limit_y ||
+          ipt.y < previous_origin_y ||
+          ipt.z >= upper_limit_z ||
+          ipt.z < lower_limit_z
+          ))
+        removed = true;
+      if (removed)
+      {
+        ipt.x = NAN;
+        ipt.y = NAN;
+        ipt.z = NAN;
+      }
+    }
+  }
 }
 
 template <typename PointT>

@@ -77,6 +77,7 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
   typedef unsigned int uint;
   typedef uint64_t uint64;
   typedef pcl::PolygonMesh Mesh;
+  typedef pcl::PointNormal PointXYZNormal;
   typedef pcl::PointCloud<pcl::PointXYZI> TsdfCloud;
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
   typedef pcl::PointCloud<pcl::PointXYZI> PointCloudXYZI;

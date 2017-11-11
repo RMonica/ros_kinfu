@@ -36,6 +36,8 @@
 #include <sensor_msgs/fill_image.h>
 #include <Eigen/StdVector>
 
+#include <pcl/filters/voxel_grid.h>
+
 #include <pcl_conversions/pcl_conversions.h>
 
 #define VOXEL_EPSILON 0.0058
@@ -306,6 +308,17 @@ void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdf
     PointCloudXYZNormal::Ptr out_cloud(new PointCloudXYZNormal());
     TriangleVectorPtr empty(new TriangleVector());
     cropMesh<pcl::PointNormal>(req->bounding_box_min,req->bounding_box_max,cloud,empty,out_cloud,empty);
+    cloud = out_cloud;
+  }
+
+  if (req->request_subsample && req->subsample_voxel_size > 0.0)
+  {
+    ROS_INFO("kinfu: Subsampling to voxel size %f...",float(req->subsample_voxel_size));
+    pcl::VoxelGrid<PointXYZNormal> voxelgrid;
+    voxelgrid.setLeafSize(req->subsample_voxel_size,req->subsample_voxel_size,req->subsample_voxel_size);
+    voxelgrid.setInputCloud(cloud);
+    PointCloudXYZNormal::Ptr out_cloud(new PointCloudXYZNormal());
+    voxelgrid.filter(*out_cloud);
     cloud = out_cloud;
   }
 

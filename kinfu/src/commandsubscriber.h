@@ -64,12 +64,13 @@ class CommandSubscriber
     typedef boost::shared_ptr<Sphere> Ptr;
     Eigen::Vector3f center;
     float radius;
+    bool set_to_empty;
 
     std::string command_id;
 
-    Sphere(const Eigen::Vector3f & c,float r,const std::string &id):
-      center(c),radius(r),command_id(id) {}
-    Sphere(): center(Eigen::Vector3f::Zero()),radius(0),command_id(0) {}
+    Sphere(const Eigen::Vector3f & c,float r,const std::string &id,const bool ste):
+      center(c),radius(r),set_to_empty(ste),command_id(id) {}
+    Sphere(): center(Eigen::Vector3f::Zero()),radius(0),set_to_empty(false) {}
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
   };
@@ -79,12 +80,13 @@ class CommandSubscriber
     typedef boost::shared_ptr<BBox> Ptr;
     Eigen::Vector3f min;
     Eigen::Vector3f max;
+    bool set_to_empty;
 
     std::string command_id;
 
-    BBox(const Eigen::Vector3f & m,const Eigen::Vector3f & M,const std::string &id):
-      min(m),max(M),command_id(id) {}
-    BBox(): min(Eigen::Vector3f::Zero()), max(Eigen::Vector3f::Zero()) {}
+    BBox(const Eigen::Vector3f & m,const Eigen::Vector3f & M,const std::string &id,const bool ste):
+      min(m),max(M),set_to_empty(ste),command_id(id) {}
+    BBox(): min(Eigen::Vector3f::Zero()),max(Eigen::Vector3f::Zero()),set_to_empty(false) {}
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
   };

@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(kinfu)
 
+if (CMAKE_COMPILER_IS_GNUCC AND (NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 6.0))
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++98")
+  message(STATUS "kinfu: forcing c++98 for CUDA compatibility.")
+endif()
+
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   cmake_modules

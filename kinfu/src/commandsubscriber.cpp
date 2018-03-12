@@ -127,9 +127,13 @@ void CommandSubscriber::commandCallback(const kinfu_msgs::KinfuCommand & cmd)
         center[i] = cmd.float_data[i];
       radius = cmd.float_data[3];
 
+      bool set_to_empty = false;
+      if (cmd.boolean_data.size() >= 1 && cmd.boolean_data[0])
+        set_to_empty = true;
+
       kinfu_center = m_initial_transformation * center;
 
-      m_clear_sphere = Sphere::Ptr(new Sphere(kinfu_center,radius,cmd.command_id));
+      m_clear_sphere = Sphere::Ptr(new Sphere(kinfu_center,radius,cmd.command_id,set_to_empty));
       }
     }
   else if (cmd.command_type == cmd.COMMAND_TYPE_CLEAR_BOUNDING_BOX)
@@ -151,7 +155,11 @@ void CommandSubscriber::commandCallback(const kinfu_msgs::KinfuCommand & cmd)
       kinfu_min = w_min.array().min(w_max.array());
       kinfu_max = w_min.array().max(w_max.array());
 
-      m_clear_bbox = BBox::Ptr(new BBox(kinfu_min,kinfu_max,cmd.command_id));
+      bool set_to_empty = false;
+      if (cmd.boolean_data.size() >= 1 && cmd.boolean_data[0])
+        set_to_empty = true;
+
+      m_clear_bbox = BBox::Ptr(new BBox(kinfu_min,kinfu_max,cmd.command_id,set_to_empty));
       }
     }
   else if (cmd.command_type == cmd.COMMAND_TYPE_TRIGGER)

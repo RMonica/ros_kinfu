@@ -2,6 +2,7 @@ find_package(CUDA REQUIRED)
 message(STATUS "kinfu: CUDA ${CUDA_VERSION} found.")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/remove_vtk_definitions_hack.cmake)
+remove_definitions("-DROS_PACKAGE_NAME=\"kinfu\"")
 REMOVE_VTK_DEFINITIONS()
 
 set(KinfuLargeScale_INCLUDE_DIRS

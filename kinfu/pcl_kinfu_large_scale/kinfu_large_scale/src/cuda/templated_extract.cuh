@@ -48,8 +48,7 @@ namespace pcl
         fetch (int x, int y, int z, int& weight) const
         {
           float tsdf;
-          const short2* tmp_pos = &(volume.ptr (rolling_buffer.voxels_size.y * z + y)[x]);
-          short2* pos = const_cast<short2*> (tmp_pos);
+          const short2* pos = &(volume.ptr (rolling_buffer.voxels_size.y * z + y)[x]);
           unpack_tsdf (*pos, tsdf, weight);
 
           return tsdf;
@@ -59,11 +58,18 @@ namespace pcl
         fetch_with_rolling_buffer (int x, int y, int z, int& weight) const
         {
           float tsdf;
-          const short2* tmp_pos = &(volume.ptr (rolling_buffer.voxels_size.y * z + y)[x]);
-          short2* pos = const_cast<short2*> (tmp_pos);
+          x += rolling_buffer.origin_GRID.x;
+          y += rolling_buffer.origin_GRID.y;
+          z += rolling_buffer.origin_GRID.z;
 
-          my_shift_tsdf_pointer (&pos);
+          if (x >= rolling_buffer.voxels_size.x)
+            x -= rolling_buffer.voxels_size.x;
+          if (y >= rolling_buffer.voxels_size.y)
+            y -= rolling_buffer.voxels_size.y;
+          if (z >= rolling_buffer.voxels_size.z)
+            z -= rolling_buffer.voxels_size.z;
 
+          const short2* pos = &(volume.ptr(rolling_buffer.voxels_size.y * z + y)[x]);
           unpack_tsdf (*pos, tsdf, weight);
 
           return tsdf;

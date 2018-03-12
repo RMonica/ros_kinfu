@@ -47,6 +47,13 @@ using namespace pcl::gpu;
 using namespace Eigen;
 using pcl::device::kinfuLS::device_cast;
 
+static short2 IntToShort2(int i)
+{
+  short2 result;
+  std::memcpy(&result,&i,sizeof(result));
+  return result;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pcl::gpu::kinfuLS::TsdfVolume::TsdfVolume(const Vector3i& resolution) : resolution_(resolution), volume_host_ (new std::vector<float>), weights_host_ (new std::vector<short>)
@@ -139,7 +146,8 @@ pcl::gpu::kinfuLS::TsdfVolume::reset()
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void
-pcl::gpu::kinfuLS::TsdfVolume::clearSphere(const Eigen::Vector3i & tsdf_origin,const Eigen::Vector3f & center,float radius)
+pcl::gpu::kinfuLS::TsdfVolume::clearSphere(const Eigen::Vector3i & tsdf_origin,const Eigen::Vector3f & center,
+                                           float radius,bool set_to_empty)
 {
   int3 o;
   o.x = tsdf_origin.x();
@@ -149,14 +157,19 @@ pcl::gpu::kinfuLS::TsdfVolume::clearSphere(const Eigen::Vector3i & tsdf_origin,c
   c.x = center.x();
   c.y = center.y();
   c.z = center.z();
+  int3 r;
+  r.x = resolution_.x();
+  r.y = resolution_.y();
+  r.z = resolution_.z();
 
-  pcl::device::kinfuLS::clearSphere(volume_,o,c,radius);
+  pcl::device::kinfuLS::clearSphere(volume_,r,o,c,radius,set_to_empty);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void
-pcl::gpu::kinfuLS::TsdfVolume::clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max)
+pcl::gpu::kinfuLS::TsdfVolume::clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,
+                                         const Eigen::Vector3f & max,bool set_to_empty)
 {
   int3 o;
   o.x = origin.x();
@@ -170,8 +183,12 @@ pcl::gpu::kinfuLS::TsdfVolume::clearBBox(const Eigen::Vector3i & origin,const Ei
   M.x = max.x();
   M.y = max.y();
   M.z = max.z();
+  int3 r;
+  r.x = resolution_.x();
+  r.y = resolution_.y();
+  r.z = resolution_.z();
 
-  pcl::device::kinfuLS::clearBBox(volume_,o,m,M);
+  pcl::device::kinfuLS::clearBBox(volume_,r,o,m,M,set_to_empty);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -214,8 +231,8 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchCloudHost (PointCloud<PointType>& cloud, boo
       for (int z = 0; z < volume_z-1; ++z)
       {
         int tmp = FETCH (x, y, z);
-        int W = reinterpret_cast<short2*>(&tmp)->y;
-        int F = reinterpret_cast<short2*>(&tmp)->x;
+        int W = IntToShort2(tmp).y;
+        int F = IntToShort2(tmp).x;
 
         if (W == 0 || F == DIVISOR)
           continue;
@@ -230,8 +247,8 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchCloudHost (PointCloud<PointType>& cloud, boo
             {
               int tmp = FETCH (x+dx, y+dy, z+dz);
 
-              int Wn = reinterpret_cast<short2*>(&tmp)->y;
-              int Fn = reinterpret_cast<short2*>(&tmp)->x;
+              int Wn = IntToShort2(tmp).y;
+              int Fn = IntToShort2(tmp).x;
               if (Wn == 0 || Fn == DIVISOR)
                 continue;
 
@@ -254,8 +271,8 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchCloudHost (PointCloud<PointType>& cloud, boo
             {
               int tmp = FETCH (x+dx, y+dy, z+dz);
 
-              int Wn = reinterpret_cast<short2*>(&tmp)->y;
-              int Fn = reinterpret_cast<short2*>(&tmp)->x;
+              int Wn = IntToShort2(tmp).y;
+              int Fn = IntToShort2(tmp).x;
               if (Wn == 0 || Fn == DIVISOR)
                 continue;
 
@@ -286,8 +303,8 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchCloudHost (PointCloud<PointType>& cloud, boo
 
             int tmp = FETCH (x+dx, y+dy, z+dz);
 
-            int Wn = reinterpret_cast<short2*>(&tmp)->y;
-            int Fn = reinterpret_cast<short2*>(&tmp)->x;
+            int Wn = IntToShort2(tmp).y;
+            int Fn = IntToShort2(tmp).x;
             if (Wn == 0 || Fn == DIVISOR)
               continue;
 
@@ -338,12 +355,11 @@ pcl::gpu::kinfuLS::TsdfVolume::pushSlice (PointCloud<PointXYZI>::Ptr existing_da
 
   const pcl::PointXYZI *first_point_ptr = &(existing_data_cloud->points[0]);
 
-  pcl::gpu::DeviceArray<pcl::PointXYZI> cloud_gpu;
-  cloud_gpu.upload (first_point_ptr, gpu_array_size);
+  pcl::gpu::DeviceArray<float4> cloud_gpu;
+  cloud_gpu.upload ((float4 *)first_point_ptr, gpu_array_size * 2);
 
-  DeviceArray<float4>& cloud_cast = (DeviceArray<float4>&) cloud_gpu;
   //volume().pushCloudAsSlice (cloud_cast, &buffer_);
-  pcl::device::kinfuLS::pushCloudAsSliceGPU (volume_, cloud_cast, buffer);
+  pcl::device::kinfuLS::pushCloudAsSliceGPU (volume_, cloud_gpu, buffer);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -373,7 +389,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchSliceAsCloud (DeviceArray<PointType>& cloud_
 
 size_t
 pcl::gpu::kinfuLS::TsdfVolume::fetchIncompletePointsAsCloud (DeviceArray<PointType>& cloud_buffer_xyz,
-  DeviceArray<PointType> &cloud_buffer_normals, const tsdf_buffer* buffer,const bool edges_only,
+  DeviceArray<PointType> &cloud_buffer_normals, const tsdf_buffer* buffer,const int type,
   DeviceArray2D<int>& last_data_transfer_matrix, int& finished ) const
 {
   if (cloud_buffer_xyz.empty ())
@@ -385,7 +401,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchIncompletePointsAsCloud (DeviceArray<PointTy
 
   float3 device_volume_size = device_cast<const float3> (size_);
 
-  size_t size = pcl::device::kinfuLS::extractIncompletePointsAsCloud (volume_, device_volume_size, buffer, edges_only,
+  size_t size = pcl::device::kinfuLS::extractIncompletePointsAsCloud (volume_, device_volume_size, buffer, type,
     cloud_buffer_xyz, cloud_buffer_normals, last_data_transfer_matrix, finished);
 
   std::cout << " SIZE IS " << size << std::endl;
@@ -408,7 +424,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchSliceAsPointCloud (DeviceArray<PointType>& c
   // create data transfer completion matrix and set it to all 0
   {
     size_t height, width;
-    pcl::device::kinfuLS::getDataTransferCompletionMatrixSize (height, width);
+    pcl::device::kinfuLS::getDataTransferCompletionMatrixSize (buffer->voxels_size, height, width);
     if (last_data_transfer_matrix.empty ())
       last_data_transfer_matrix.create (height, width);
     cudaSafeCall ( cudaMemset2D (last_data_transfer_matrix.ptr(), last_data_transfer_matrix.step(), 0,
@@ -467,7 +483,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchSliceAsPointCloud (DeviceArray<PointType>& c
 
 pcl::gpu::kinfuLS::TsdfVolume::PointCloudXYZNormal::Ptr
 pcl::gpu::kinfuLS::TsdfVolume::fetchIncompletePointsAsPointCloud (DeviceArray<PointType>& cloud_buffer_xyz,
-  DeviceArray<PointType>& cloud_buffer_normals, const bool edges_only, DeviceArray2D<int>& last_data_transfer_matrix,
+  DeviceArray<PointType>& cloud_buffer_normals, const int type, DeviceArray2D<int>& last_data_transfer_matrix,
   const pcl::gpu::kinfuLS::tsdf_buffer* buffer) const
 {
   DeviceArray<PointXYZ> points;
@@ -477,7 +493,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchIncompletePointsAsPointCloud (DeviceArray<Po
   // create data transfer completion matrix and set it to all 0
   {
     size_t height, width;
-    pcl::device::kinfuLS::getDataTransferCompletionMatrixSize (height, width);
+    pcl::device::kinfuLS::getDataTransferCompletionMatrixSize (buffer->voxels_size, height, width);
     if (last_data_transfer_matrix.empty ())
       last_data_transfer_matrix.create (height, width);
     cudaSafeCall ( cudaMemset2D (last_data_transfer_matrix.ptr(), last_data_transfer_matrix.step(), 0,
@@ -493,7 +509,7 @@ pcl::gpu::kinfuLS::TsdfVolume::fetchIncompletePointsAsPointCloud (DeviceArray<Po
   do
   {
     size_t downloaded_size = this->fetchIncompletePointsAsCloud (cloud_buffer_xyz, cloud_buffer_normals,
-      buffer, edges_only, last_data_transfer_matrix, finished);
+      buffer, type, last_data_transfer_matrix, finished);
 
     points = DeviceArray<PointXYZ> (cloud_buffer_xyz.ptr (), downloaded_size);
     normals = DeviceArray<PointXYZ> (cloud_buffer_normals.ptr (), downloaded_size);

@@ -71,6 +71,8 @@ namespace pcl
             typedef std::vector<short> WeightVector;
             typedef boost::shared_ptr<WeightVector> WeightVectorPtr;
             typedef boost::shared_ptr<WeightCubeListener> Ptr;
+            typedef std::vector<Eigen::Vector3i, Eigen::aligned_allocator<Eigen::Vector3i> > Vector3iVector;
+            typedef pcl::PointCloud<pcl::PointNormal> PointXYZNormalCloud;
 
             // empty virtual constructor to avoid memory leaks
             virtual ~WeightCubeListener() {}
@@ -78,8 +80,10 @@ namespace pcl
             virtual void onNewCube(const WeightVectorPtr weights,const Eigen::Vector3f& cube_size,const Eigen::Vector3i& nb_voxels,
               const Eigen::Vector3i& cyclical_shifted_origin,const Eigen::Vector3i& grid_origin) = 0;
 
-            virtual void onClearSphere(const Eigen::Vector3f & center,float radius) = 0;
-            virtual void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max) = 0;
+            virtual void onClearSphere(const Eigen::Vector3f & center,float radius,
+                                       const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) = 0;
+            virtual void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
+                                     const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) = 0;
 
             virtual void onReset() = 0;
 
@@ -106,6 +110,8 @@ namespace pcl
               TYPE_ANY,
               TYPE_FRONTIERS,
               TYPE_BORDERS,
+              TYPE_SURFACES,
+              TYPE_CLEARED_FRONTIERS, // when a bbox or sphere is cleared, frontiers may be generated
             };
 
             virtual ~IncompletePointsListener() {}
@@ -131,7 +137,10 @@ namespace pcl
             buffer_.volume_size.z = cube_size;
             buffer_.voxels_size.x = nb_voxels_per_axis; 
             buffer_.voxels_size.y = nb_voxels_per_axis; 
-            buffer_.voxels_size.z = nb_voxels_per_axis; 
+            buffer_.voxels_size.z = nb_voxels_per_axis;
+            buffer_.voxels_volume_padding.x = 0;
+            buffer_.voxels_volume_padding.y = 0;
+            buffer_.voxels_volume_padding.z = 0;
             extract_known_points_ = false;
             old_cube_retrieved_ = true;
           }
@@ -155,7 +164,10 @@ namespace pcl
             buffer_.volume_size.z = volume_size_z;
             buffer_.voxels_size.x = nb_voxels_x; 
             buffer_.voxels_size.y = nb_voxels_y; 
-            buffer_.voxels_size.z = nb_voxels_z; 
+            buffer_.voxels_size.z = nb_voxels_z;
+            buffer_.voxels_volume_padding.x = 0;
+            buffer_.voxels_volume_padding.y = 0;
+            buffer_.voxels_volume_padding.z = 0;
             extract_known_points_ = false;
           }
 
@@ -165,12 +177,19 @@ namespace pcl
             * \param[in] volume pointer to the TSDFVolume living in GPU
             * \param[in] cam_pose global pose of the camera in the world
             * \param[in] distance_camera_target distance from the camera's origin to the target point
+            * \param[in] distance_threshold if target is less than this distance from cube center, do not shift
             * \param[in] perform_shift if set to false, shifting is not performed. The function will return true if shifting is needed.
             * \param[in] last_shift if set to true, the whole cube will be shifted. This is used to push the whole cube to the world model.
             * \param[in] force_shift if set to true, shifting is forced.
             * \return true is the cube needs to be or has been shifted.
             */
-          bool checkForShift (const TsdfVolume::Ptr volume, const Eigen::Affine3f &cam_pose, const double distance_camera_target, const bool perform_shift = true, const bool last_shift = false, const bool force_shift = false);
+          bool checkForShift (const TsdfVolume::Ptr volume,
+                              const Eigen::Affine3f &cam_pose,
+                              const double distance_camera_target,
+                              const double distance_threshold,
+                              const bool perform_shift = true,
+                              const bool last_shift = false,
+                              const bool force_shift = false);
           
           /** \brief Perform shifting operations:
               Compute offsets.
@@ -225,6 +244,17 @@ namespace pcl
             buffer_.volume_size.z = size;
           }
 
+          /** \brief Set padding of the TSDF volume, where volume integration is skipped
+           * \param[in] padding the padding, in voxels
+           */
+
+          void setPadding (const int padding)
+          {
+            buffer_.voxels_volume_padding.x = padding;
+            buffer_.voxels_volume_padding.y = padding;
+            buffer_.voxels_volume_padding.z = padding;
+          }
+
           /** \brief Computes and set the origin of the new cube (relative to the world), centered around a the target point.
             * \param[in] target_point the target point around which the new cube will be centered.
             * \param[out] shiftX shift on X axis (in indices).
@@ -251,7 +281,7 @@ namespace pcl
           void resetBuffer (TsdfVolume::Ptr tsdf_volume)
           {
             buffer_.origin_GRID.x = 0; buffer_.origin_GRID.y = 0; buffer_.origin_GRID.z = 0;
-            buffer_.origin_GRID_global.x = 0.f; buffer_.origin_GRID_global.y = 0.f; buffer_.origin_GRID_global.z = 0.f;
+            buffer_.origin_GRID_global.x = 0; buffer_.origin_GRID_global.y = 0; buffer_.origin_GRID_global.z = 0;
             buffer_.origin_metric.x = 0.f; buffer_.origin_metric.y = 0.f; buffer_.origin_metric.z = 0.f;
             if (weight_cube_listener_)
               weight_cube_listener_->onReset();
@@ -281,23 +311,9 @@ namespace pcl
             extract_known_points_ = e;
           }
 
-          void clearSphere(const Eigen::Vector3f & center,float radius)
-          {
-            world_model_.clearSphere(center,radius);
-            if (weight_cube_listener_)
-              weight_cube_listener_->onClearSphere(center,radius);
-            if (incomplete_points_listener_)
-              incomplete_points_listener_->onClearSphere(center, radius, IncompletePointsListener::TYPE_ANY);
-          }
+          void clearSphere(const Eigen::Vector3f & center,float radius,bool set_to_empty);
 
-          void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max)
-          {
-            world_model_.clearBBox(min,max);
-            if (weight_cube_listener_)
-              weight_cube_listener_->onClearBBox(min,max);
-            if (incomplete_points_listener_)
-              incomplete_points_listener_->onClearBBox(min, max, IncompletePointsListener::TYPE_ANY);
-          }
+          void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
 
           void checkOldCubeRetrieval(const TsdfVolume::Ptr volume);
           bool isOldCubeRetrieved() const {return old_cube_retrieved_; }

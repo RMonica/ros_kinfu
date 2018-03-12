@@ -30,6 +30,9 @@
 
 #include "weightcubelistener.h"
 
+template <typename T>
+  T SQR(const T & t) {return t * t; }
+
 TWeightCubeListener::TWeightCubeListener()
   {
   m_voxel_size = 1.0;
@@ -119,7 +122,8 @@ bool TWeightCubeListener::retrieveOldCube(WeightVectorPtr& weights,const Eigen::
   return true;
   }
 
-void TWeightCubeListener::onClearSphere(const Eigen::Vector3f & center, float radius)
+void TWeightCubeListener::onClearSphere(const Eigen::Vector3f & center, float radius,
+                                        const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier)
   {
   // scope only
     {
@@ -137,19 +141,71 @@ void TWeightCubeListener::onClearSphere(const Eigen::Vector3f & center, float ra
     Eigen::Vector3i min = (center - Eigen::Vector3f::Ones() * (radius + 1.0)).cast<int>();
     Eigen::Vector3i max = (center + Eigen::Vector3f::Ones() * (radius + 1.0)).cast<int>();
 
+    if (cleared_frontier)
+      {
+      ROS_INFO("kinfu: onClearSphere: building frontier...");
+      Eigen::Vector3i t;
+      OccupancyOctree::Cache octree_cache;
+      for (t.x() = min.x(); t.x() <= max.x(); t.x()++)
+        for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
+          for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
+          {
+            if ((t.cast<float>() - center).squaredNorm() > SQR(radius))
+              continue;
+
+            if (m_octree.GetIntCached(t.x(),t.y(),t.z(),octree_cache) == set_to_known)
+              continue;
+
+            for (uint ax = 0; ax < 3; ax++)
+              for (int dx = -1; dx <= 1; dx++)
+                {
+                if (!dx)
+                  continue;
+                const Eigen::Vector3i dt = Eigen::Vector3i::Unit(ax) * dx;
+                const Eigen::Vector3i nt = t + dt;
+                bool create_t = false;
+                if ((nt.cast<float>() - center).squaredNorm() >= SQR(radius) &&
+                    (m_octree.GetIntCached(nt.x(),nt.y(),nt.z(),octree_cache) != set_to_known))
+                  {
+                  if (set_to_known)
+                    create_t = true;
+                  else
+                    {
+                    pcl::PointNormal pt;
+                    pt.x = nt.x(); pt.y = nt.y(); pt.z = nt.z();
+                    Eigen::Vector3f normal = (nt.cast<float>() - center).normalized();
+                    pt.normal_x = normal.x(); pt.normal_y = normal.y(); pt.normal_z = normal.z();
+                    cleared_frontier->push_back(pt);
+                    }
+                  }
+
+                if (create_t)
+                  {
+                  pcl::PointNormal pt;
+                  pt.x = t.x(); pt.y = t.y(); pt.z = t.z();
+                  Eigen::Vector3f normal = -(t.cast<float>() - center).normalized();
+                  pt.normal_x = normal.x(); pt.normal_y = normal.y(); pt.normal_z = normal.z();
+                  cleared_frontier->push_back(pt);
+                  }
+                }
+          }
+      ROS_INFO("kinfu: onClearSphere: frontier built.");
+      }
+
     // clear the sphere in its bounding box only
     Eigen::Vector3i t;
     for (t.x() = min.x(); t.x() <= max.x(); t.x()++)
       for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
         for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
-          if ((t.cast<float>() - center).norm() < radius)
-            m_octree.SetInt(t.x(),t.y(),t.z(),false);
+          if ((t.cast<float>() - center).squaredNorm() < SQR(radius))
+            m_octree.SetInt(t.x(),t.y(),t.z(),set_to_known);
 
     m_cube_cond.notify_all();
     }
   }
 
-void TWeightCubeListener::onClearBBox(const Eigen::Vector3f & m,const Eigen::Vector3f & M)
+void TWeightCubeListener::onClearBBox(const Eigen::Vector3f & m,const Eigen::Vector3f & M,
+                                      const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier)
   {
   // scope only
     {
@@ -164,15 +220,56 @@ void TWeightCubeListener::onClearBBox(const Eigen::Vector3f & m,const Eigen::Vec
         return;
       }
 
-    Eigen::Vector3i min = (m + Eigen::Vector3f::Ones() * 0.5).cast<int>();
-    Eigen::Vector3i max = (M + Eigen::Vector3f::Ones() * 0.5).cast<int>();
+    const Eigen::Vector3i min = (m + Eigen::Vector3f::Ones() * 0.5).cast<int>();
+    const Eigen::Vector3i max = (M + Eigen::Vector3f::Ones() * 0.5).cast<int>();
 
-    // clear the sphere in its bounding box only
+    if (cleared_frontier)
+      {
+      ROS_INFO("kinfu: onClearBBox: building frontier...");
+      Eigen::Vector3i t;
+      OccupancyOctree::Cache octree_cache;
+      for (t.x() = min.x(); t.x() <= max.x(); t.x()++)
+        for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
+          for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
+            {
+            if ((t.array() != min.array()).any() && (t.array() != max.array()).any())
+              continue;
+
+            if (m_octree.GetIntCached(t.x(),t.y(),t.z(),octree_cache) == set_to_known)
+              continue;
+
+            Eigen::Vector3i inormal = Eigen::Vector3i::Zero();
+            for (uint i = 0; i < 3; i++)
+              if (min[i] == t[i])
+                inormal[i] = -1;
+            for (uint i = 0; i < 3; i++)
+              if (max[i] == t[i])
+                inormal[i] = 1;
+            Eigen::Vector3f normal = inormal.cast<float>().normalized();
+
+            Eigen::Vector3i nt = t + inormal;
+            if (m_octree.GetIntCached(nt.x(),nt.y(),nt.z(),octree_cache) != set_to_known)
+              {
+              pcl::PointNormal pt;
+              if (set_to_known)
+                { pt.x = t.x(); pt.y = t.y(); pt.z = t.z(); }
+              else
+                { pt.x = nt.x(); pt.y = nt.y(); pt.z = nt.z(); }
+              if (set_to_known)
+                normal *= -1.0;
+              pt.normal_x = normal.x(); pt.normal_y = normal.y(); pt.normal_z = normal.z();
+              cleared_frontier->push_back(pt);
+              }
+            }
+      ROS_INFO("kinfu: onClearBBox: frontier built.");
+      }
+
+    // clear the bounding box
     Eigen::Vector3i t;
     for (t.x() = min.x(); t.x() <= max.x(); t.x()++)
       for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
         for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
-          m_octree.SetInt(t.x(),t.y(),t.z(),false);
+          m_octree.SetInt(t.x(),t.y(),t.z(),set_to_known);
 
     m_cube_cond.notify_all();
     }
@@ -353,7 +450,6 @@ void TWeightCubeListener::NewCubeWorker(NewCubeInfo::Ptr new_info)
 
   OccupancyOctree::Cache cache;
 
-  // there must be some off-by-one error somewhere: start from 1 and end at -1
   for (int z = 0; z < nb_voxels.z(); z++)
     {
     const int wz = (int(z + cyclical_shifted_origin.z()) % nb_voxels.z()) * z_edge;

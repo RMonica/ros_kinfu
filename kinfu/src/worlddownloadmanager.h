@@ -84,7 +84,10 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
   typedef pcl::PointCloud<pcl::PointNormal> PointCloudXYZNormal;
   typedef pcl::gpu::kinfuLS::RayCaster RayCaster;
   typedef std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> > Vector3fVector;
+  typedef std::vector<Eigen::Vector4i, Eigen::aligned_allocator<Eigen::Vector4i> > Vector4iVector;
   typedef std::vector<Eigen::Vector3i, Eigen::aligned_allocator<Eigen::Vector3i> > Vector3iVector;
+  typedef std::vector<uint64> UInt64Vector;
+  typedef std::vector<bool> BoolVector;
   struct Triangle
   {
     uint64 & operator[](const std::size_t index) {return indices[index]; }
@@ -145,7 +148,7 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
 
   void extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
   void extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdfRequestConstPtr req,
-    kinfu_msgs::RequestResultPtr resp,TsdfCloud::Ptr tsdf_cloud);
+    kinfu_msgs::RequestResultPtr resp, TsdfCloud::Ptr tsdf_cloud, const float scale);
 
   template <class PointT>
   static void separateMesh(Mesh::ConstPtr mesh,typename pcl::PointCloud<PointT>::Ptr points,
@@ -172,16 +175,16 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
 
   void extractBorderPointsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req);
 
-  bool marchingCubes(pcl::PointCloud<pcl::PointXYZI>::Ptr cloud, std::vector<Mesh::Ptr> & output_meshes) const;
+  bool marchingCubes(pcl::PointCloud<pcl::PointXYZI>::Ptr cloud, const float scale, std::vector<Mesh::Ptr> & output_meshes) const;
 
   // returns false on error
   bool lockKinfu();
 
   void unlockKinfu();
 
-  bool shiftNear(const Eigen::Affine3f & pose, float distance); // false on error
+  bool shiftNear(const Eigen::Affine3f & pose, const float distance, const float distance_threshold); // false on error
 
-  void initRaycaster(bool has_intrinsics,const kinfu_msgs::KinfuCameraIntrinsics & intr,
+  void initRaycaster(bool has_intrinsics, const kinfu_msgs::KinfuCameraIntrinsics & intr,
     bool has_bounding_box_view,const kinfu_msgs::KinfuCloudPoint & bbox_min,const kinfu_msgs::KinfuCloudPoint & bbox_max);
 
   template <class PointT>

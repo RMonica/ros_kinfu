@@ -46,6 +46,10 @@ void TIncompletePointsListener::AddAcceptedType(const ListenerType type)
       if (!m_frontiers_cloud)
         m_frontiers_cloud = PointXYZNormalCloud::Ptr(new PointXYZNormalCloud);
       break;
+    case IncompletePointsListener::TYPE_SURFACES:
+      if (!m_surfaces_cloud)
+        m_surfaces_cloud = PointXYZNormalCloud::Ptr(new PointXYZNormalCloud);
+      break;
     default:
       ROS_WARN("kinfu: incomplete points listener: ignored unknown type: %u",uint(type));
       break;
@@ -61,8 +65,16 @@ void TIncompletePointsListener::onAddSlice(const PointCloudXYZNormal::ConstPtr c
         (*m_border_cloud) += (*cloud);
       break;
     case IncompletePointsListener::TYPE_FRONTIERS:
-      if (!m_frontiers_cloud)
-        m_frontiers_cloud = PointXYZNormalCloud::Ptr(new PointXYZNormalCloud);
+      if (m_frontiers_cloud && cloud)
+        (*m_frontiers_cloud) += (*cloud);
+      break;
+    case IncompletePointsListener::TYPE_SURFACES:
+      if (m_surfaces_cloud && cloud)
+        (*m_surfaces_cloud) += (*cloud);
+      break;
+    case IncompletePointsListener::TYPE_CLEARED_FRONTIERS:
+      if (m_frontiers_cloud && cloud)
+        (*m_frontiers_cloud) += (*cloud);
       break;
     default:
       ROS_WARN("kinfu: incomplete points listener: ignored unknown type: %u",uint(type));
@@ -72,7 +84,9 @@ void TIncompletePointsListener::onAddSlice(const PointCloudXYZNormal::ConstPtr c
   ROS_INFO("kinfu: incomplete points listener: added slice.");
   }
 
-void TIncompletePointsListener::onClearBBox(const Eigen::Vector3f & bbox_min, const Eigen::Vector3f & bbox_max, const ListenerType type)
+void TIncompletePointsListener::onClearBBox(const Eigen::Vector3f & bbox_min,
+                                            const Eigen::Vector3f & bbox_max,
+                                            const ListenerType type)
   {
   if (type != IncompletePointsListener::TYPE_ANY)
     {
@@ -86,6 +100,8 @@ void TIncompletePointsListener::onClearBBox(const Eigen::Vector3f & bbox_min, co
     m_border_cloud = ClearBBoxCloud(m_border_cloud,bbox_min,bbox_max);
   if (m_frontiers_cloud)
     m_frontiers_cloud = ClearBBoxCloud(m_frontiers_cloud,bbox_min,bbox_max);
+  if (m_surfaces_cloud)
+    m_surfaces_cloud = ClearBBoxCloud(m_surfaces_cloud,bbox_min,bbox_max);
   }
 
 void TIncompletePointsListener::onClearSphere(const Eigen::Vector3f & center, const float radius, const ListenerType type)
@@ -102,6 +118,8 @@ void TIncompletePointsListener::onClearSphere(const Eigen::Vector3f & center, co
     m_border_cloud = ClearSphereCloud(m_border_cloud,center,radius);
   if (m_frontiers_cloud)
     m_frontiers_cloud = ClearSphereCloud(m_frontiers_cloud,center,radius);
+  if (m_surfaces_cloud)
+    m_surfaces_cloud = ClearSphereCloud(m_surfaces_cloud,center,radius);
   }
 
 TIncompletePointsListener::PointXYZNormalCloud::Ptr TIncompletePointsListener::ClearSphereCloud(
@@ -131,8 +149,15 @@ TIncompletePointsListener::PointXYZNormalCloud::Ptr TIncompletePointsListener::C
     {
     const pcl::PointNormal & pt = (*cloud)[i];
     const Eigen::Vector3f ept(pt.x,pt.y,pt.z);
-    if ((ept.array() < bbox_min.array()).any() || (ept.array() > bbox_max.array()).any())
+    if ((ept.array() < bbox_min.array()).any() || (ept.array() >= bbox_max.array()).any())
       result->push_back(pt);
     }
   return result;
+  }
+
+bool TIncompletePointsListener::acceptsType(const ListenerType type) const
+  {
+  if (type == TYPE_CLEARED_FRONTIERS)
+    return m_accepted_types.find(TYPE_FRONTIERS) != m_accepted_types.end();
+  return m_accepted_types.find(type) != m_accepted_types.end();
   }

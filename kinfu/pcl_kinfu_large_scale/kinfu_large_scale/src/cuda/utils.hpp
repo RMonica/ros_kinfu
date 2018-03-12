@@ -602,6 +602,7 @@ namespace pcl
           return ptr[tid - lane];
         }
 
+#if 0 // deprecated in CUDA 9.0
             static __forceinline__ __device__ int 
         Ballot(int predicate, volatile int* cta_buffer)
             {
@@ -627,6 +628,7 @@ namespace pcl
           return warp_reduce(cta_buffer, tid) == 32;
   #endif
         }
+#endif
       };
     }
   }

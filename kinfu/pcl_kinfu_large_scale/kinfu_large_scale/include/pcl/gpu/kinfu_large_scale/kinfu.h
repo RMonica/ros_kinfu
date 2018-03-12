@@ -90,12 +90,14 @@ namespace pcl
 
           /** \brief Constructor
             * \param[in] volumeSize physical size of the volume represented by the tdsf volume. In meters.
+            * \param[in] volume_resolution resolution of the TSDF volume
             * \param[in] shiftingDistance when the camera target point is farther than shiftingDistance from the center of the volume, shiting occurs. In meters.
             * \note The target point is located at (0, 0, 0.6*volumeSize) in camera coordinates.
             * \param[in] rows height of depth image
             * \param[in] cols width of depth image
             */
-          KinfuTracker (const Eigen::Vector3f &volumeSize, const float shiftingDistance, int rows = 480, int cols = 640);
+          KinfuTracker (const Eigen::Vector3f &volumeSize, const Eigen::Vector3i & volume_resolution,
+                        const float shiftingDistance, int rows = 480, int cols = 640);
 
           /** \brief Sets Depth camera intrinsics
             * \param[in] fx focal length x 
@@ -133,6 +135,12 @@ namespace pcl
           void
           setCameraMovementThreshold(float threshold = 0.001f);
 
+          /** \brief Sets TSDF volume padding
+           * \param[in] padding the padding
+           */
+          void
+          setTSDFPadding(const int padding);
+
           /** \brief Performs initialization for color integration. Must be called before calling color integration. 
             * \param[in] max_weight max weighe for color integration. -1 means default weight.
             */
@@ -147,9 +155,9 @@ namespace pcl
           int
           rows ();
 
-          void clearSphere(const Eigen::Vector3f & center,float radius);
+          void clearSphere(const Eigen::Vector3f & center,float radius,bool set_to_empty);
 
-          void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max);
+          void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
 
           struct THint
           {
@@ -202,7 +210,8 @@ namespace pcl
             * \param[in] distance the distance at which the volume must be placed if a shift occurs
             * \returns whether a shift was necessary
             */
-          bool shiftNear (const Eigen::Affine3f & pose, float distance = 0.0f, bool forced = false);
+          bool shiftNear (const Eigen::Affine3f & pose, float distance = 0.0f,
+                          float distance_threshold = 0.0f, bool forced = false);
 
           /** \brief is last shift complete or still in progress?
             * \returns if it's complete
@@ -537,6 +546,9 @@ namespace pcl
 
           /** \brief Size of the TSDF volume in meters. */
           float volume_size_;
+
+          /** \brief Size of the TSDF volume in cells. */
+          int voxels_size_;
           
           /** \brief True if ICP is lost */
           bool lost_;

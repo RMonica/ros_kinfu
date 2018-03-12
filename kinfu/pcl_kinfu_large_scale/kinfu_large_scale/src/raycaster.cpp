@@ -44,6 +44,24 @@ using namespace Eigen;
 //using namespace pcl::gpu::kinfuLS;
 //using namespace pcl::device::kinfuLS;
 
+static float3 operator-(const float3 & a,const float3 & b)
+{
+  float3 result;
+  result.x = a.x - b.x;
+  result.y = a.y - b.y;
+  result.z = a.z - b.z;
+  return result;
+}
+
+static float3 EigenToFloat3(const Eigen::Vector3f & e)
+{
+  float3 result;
+  result.x = e.x();
+  result.y = e.y();
+  result.z = e.z();
+  return result;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pcl::gpu::kinfuLS::RayCaster::RayCaster(int rows_arg, int cols_arg, float fx, float fy, float cx, float cy)
@@ -53,6 +71,9 @@ pcl::gpu::kinfuLS::RayCaster::RayCaster(int rows_arg, int cols_arg, float fx, fl
   normal_map_.create(rows * 3, cols);
   raycast_step_ = -1.0;
   min_range_ = 0.0;
+
+  with_vertex_ = true;
+  with_known_ = false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -74,7 +95,8 @@ pcl::gpu::kinfuLS::RayCaster::setIntrinsics(float fx, float fy, float cx, float 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void 
-pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& camera_pose, tsdf_buffer* buffer,bool with_known)
+pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& camera_pose,
+                                  tsdf_buffer* buffer)
 {  
   camera_pose_.linear() = camera_pose.linear();
   camera_pose_.translation() = camera_pose.translation();
@@ -82,10 +104,14 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
   pcl::device::kinfuLS::Intr intr (fx_, fy_, cx_, cy_);
 
   vertex_map_.create(rows * 3, cols);
-  if (!with_known)
+
+  if (!with_known_)
     normal_map_.create(rows * 3, cols);
   else
     known_map_.create(rows, cols);
+
+  if (with_voxel_ids_)
+    voxel_ids_map_.create(rows * 3, cols);
 
   typedef Matrix<float, 3, 3, RowMajor> Matrix3f;
     
@@ -105,11 +131,48 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
   if (raycast_step_ > 0.0)
     tranc_dist = raycast_step_;
 
-  if (!with_known)
-    pcl::device::kinfuLS::raycast (intr, device_R, device_t, tranc_dist, min_range_, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, normal_map_);
-  else if (with_known && !has_bbox_)
-    pcl::device::kinfuLS::unkRaycast (intr, device_R, device_t, tranc_dist, min_range_, pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer, vertex_map_, known_map_);
-  else if (with_known && has_bbox_)
+  pcl::device::kinfuLS::RaycastFilter raycast_filter;
+  if (filter_data_.has_bbox)
+  {
+    raycast_filter.has_bbox = true;
+    raycast_filter.bbox_min = EigenToFloat3(filter_data_.bbox_min) - buffer->origin_metric;
+    raycast_filter.bbox_max = EigenToFloat3(filter_data_.bbox_max) - buffer->origin_metric;
+  }
+  if (filter_data_.has_sphere)
+  {
+    raycast_filter.has_sphere = true;
+    raycast_filter.sphere_center = EigenToFloat3(filter_data_.sphere_center) - buffer->origin_metric;
+    raycast_filter.sphere_radius = filter_data_.sphere_radius;
+  }
+
+  if (!with_known_)
+  {
+    pcl::device::kinfuLS::raycast (intr, device_R, device_t, tranc_dist, min_range_,
+                                   pcl::device::kinfuLS::device_cast<const float3>(volume_size_),
+                                   volume.data(), buffer, vertex_map_, normal_map_);
+  }
+  else if (with_known_ && !has_bbox_)
+  {
+    if (with_vertex_)
+    {
+      pcl::device::kinfuLS::unkRaycast (intr, device_R, device_t, tranc_dist, min_range_,
+                                        pcl::device::kinfuLS::device_cast<const float3>(volume_size_),
+                                        volume.data(), buffer, raycast_filter, vertex_map_, known_map_);
+    }
+    else if (with_voxel_ids_)
+    {
+      pcl::device::kinfuLS::unkRaycastVoxelIndex(intr, device_R, device_t, tranc_dist, min_range_,
+        pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
+        raycast_filter, vertex_map_, known_map_, voxel_ids_map_);
+    }
+    else
+    {
+      pcl::device::kinfuLS::unkRaycastNoVertex (intr, device_R, device_t, tranc_dist, min_range_,
+                                        pcl::device::kinfuLS::device_cast<const float3>(volume_size_),
+                                        volume.data(), buffer, raycast_filter, vertex_map_, known_map_);
+    }
+  }
+  else if (with_known_ && has_bbox_)
   {
     float3 device_bbox_min = pcl::device::kinfuLS::device_cast<float3>(bbox_min_);
     device_bbox_min.x -= buffer->origin_metric.x;
@@ -121,9 +184,24 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
     device_bbox_max.y -= buffer->origin_metric.y;
     device_bbox_max.z -= buffer->origin_metric.z;
 
-    pcl::device::kinfuLS::unkRaycastBBox(intr, device_R, device_t, tranc_dist, min_range_,
-      pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
-      vertex_map_, known_map_, device_bbox_min, device_bbox_max);
+    if (with_vertex_)
+    {
+      pcl::device::kinfuLS::unkRaycastBBox(intr, device_R, device_t, tranc_dist, min_range_,
+        pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
+        raycast_filter, vertex_map_, known_map_, device_bbox_min, device_bbox_max);
+    }
+    else if (with_voxel_ids_)
+    {
+      pcl::device::kinfuLS::unkRaycastBBoxVoxelIndex(intr, device_R, device_t, tranc_dist, min_range_,
+        pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
+        raycast_filter, vertex_map_, known_map_, voxel_ids_map_, device_bbox_min, device_bbox_max);
+    }
+    else
+    {
+      pcl::device::kinfuLS::unkRaycastBBoxNoVertex(intr, device_R, device_t, tranc_dist, min_range_,
+        pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
+        raycast_filter, vertex_map_, known_map_, device_bbox_min, device_bbox_max);
+    }
   }
 }
 

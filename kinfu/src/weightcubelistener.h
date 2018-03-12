@@ -60,9 +60,11 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
   typedef pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeListener Listener;
   typedef pcl::BitmaskOctree<3> OccupancyOctree;
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
+  typedef pcl::PointCloud<pcl::PointNormal> PointXYZNormalCloud;
   typedef boost::shared_ptr<TWeightCubeListener> Ptr;
   typedef unsigned int uint;
   typedef uint64_t uint64;
+  typedef std::vector<Eigen::Vector3i, Eigen::aligned_allocator<Eigen::Vector3i> > Vector3iVector;
 
   TWeightCubeListener();
   ~TWeightCubeListener();
@@ -70,8 +72,10 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
   void onNewCube(const Listener::WeightVectorPtr weights,const Eigen::Vector3f& cube_size,const Eigen::Vector3i& nb_voxels,
     const Eigen::Vector3i& cyclical_shifted_origin,const Eigen::Vector3i& grid_origin);
 
-  void onClearSphere(const Eigen::Vector3f & center,float radius);
-  void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max);
+  void onClearSphere(const Eigen::Vector3f & center,float radius,
+                     const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
+  void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
+                   const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
 
   void onReset();
 

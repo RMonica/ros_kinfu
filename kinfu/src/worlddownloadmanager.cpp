@@ -41,7 +41,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 
 #define VOXEL_EPSILON 0.0058
-#define SQR(x) ((x)*(x))
+template <typename T> T SQR(const T & t) {return t * t; }
 
 WorldDownloadManager::WorldDownloadManager(ros::NodeHandle &nhandle,boost::mutex &shared_mutex,boost::condition_variable & cond):
   m_nh(nhandle),m_shared_mutex(shared_mutex),m_shared_cond(cond),m_request_manager(m_nh,*this)
@@ -155,8 +155,11 @@ void WorldDownloadManager::requestWorker(kinfu_msgs::KinfuTsdfRequestConstPtr re
   else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VOXELGRID))
     extractVoxelGridWorker(req);
   else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_FRONTIER_POINTS) ||
-    uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS))
+    uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS) ||
+    uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_SURFACE_POINTS))
     extractBorderPointsWorker(req);
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VIEW_SCORE))
+    extractVoxelCountViewsWorker(req);
   else
   {
     ROS_ERROR("Request type %u (id: %u) is unknown.",
@@ -252,9 +255,11 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
   TsdfCloud::Ptr kinfu_cloud = req->request_reset ?
     m_kinfu->extractWorldAndReset() : m_kinfu->extractWorld();
 
+  const float kinfu_scale = m_kinfu->getVoxelSize();
+
   unlockKinfu();
 
-  extractCloudWorkerMCWithNormals(req,resp,kinfu_cloud);
+  extractCloudWorkerMCWithNormals(req,resp,kinfu_cloud,kinfu_scale);
   resp->pointcloud.header = resp->header;
 
   ROS_INFO("kinfu: Publishing...");
@@ -263,14 +268,14 @@ void WorldDownloadManager::extractCloudWorker(kinfu_msgs::KinfuTsdfRequestConstP
 }
 
 void WorldDownloadManager::extractCloudWorkerMCWithNormals(kinfu_msgs::KinfuTsdfRequestConstPtr req,
-    kinfu_msgs::RequestResultPtr resp, TsdfCloud::Ptr kinfu_cloud)
+    kinfu_msgs::RequestResultPtr resp, TsdfCloud::Ptr kinfu_cloud, const float scale)
 {
   Eigen::Affine3f transformation = m_reverse_initial_transformation;
 
   std::vector<Mesh::Ptr> meshes;
 
   ROS_INFO("kinfu: Marching cubes...");
-  if (!marchingCubes(kinfu_cloud,meshes))
+  if (!marchingCubes(kinfu_cloud,scale,meshes))
     return; // ERROR
 
   kinfu_cloud->clear(); // save some memory
@@ -415,6 +420,8 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   pcl::PointCloud<pcl::PointXYZI>::Ptr kinfu_cloud = req->request_reset ?
     m_kinfu->extractWorldAndReset() : m_kinfu->extractWorld();
 
+  const float kinfu_scale = m_kinfu->getVoxelSize();
+
   unlockKinfu();
 
   Eigen::Affine3f transformation = m_reverse_initial_transformation;
@@ -422,7 +429,7 @@ void WorldDownloadManager::extractMeshWorker(kinfu_msgs::KinfuTsdfRequestConstPt
   std::vector<Mesh::Ptr> meshes;
 
   ROS_INFO("kinfu: Marching cubes...");
-  if (!marchingCubes(kinfu_cloud,meshes))
+  if (!marchingCubes(kinfu_cloud,kinfu_scale,meshes))
     return; // ERROR
 
   kinfu_cloud->clear(); // save some memory
@@ -516,11 +523,14 @@ void WorldDownloadManager::extractViewWorker(kinfu_msgs::KinfuTsdfRequestConstPt
 
   initRaycaster(has_intrinsics,req->camera_intrinsics,
     req->request_bounding_box_view,req->bounding_box_view_min,req->bounding_box_view_max);
-  const uint rows = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->rows();
-  const uint cols = has_intrinsics ? req->camera_intrinsics.size_y : m_kinfu->cols();
+  const uint rows = has_intrinsics ? req->camera_intrinsics.size_y : m_kinfu->rows();
+  const uint cols = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->cols();
 
-  if (!shiftNear(view_pose,req->tsdf_center_distance))
+  if (!shiftNear(view_pose,req->tsdf_center_distance,req->shift_distance_threshold))
     return; // error or shutting down
+
+  m_raycaster->setWithKnown(false);
+  m_raycaster->setWithVertexMap(true);
 
   ROS_INFO("kinfu: generating scene...");
   m_raycaster->run ( m_kinfu->volume (), view_pose, m_kinfu->getCyclicalBufferStructure () );
@@ -564,15 +574,18 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
 
   initRaycaster(has_intrinsics,req->camera_intrinsics,
     req->request_bounding_box_view,req->bounding_box_view_min,req->bounding_box_view_max);
-  const uint rows = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->rows();
-  const uint cols = has_intrinsics ? req->camera_intrinsics.size_y : m_kinfu->cols();
+  const uint rows = has_intrinsics ? req->camera_intrinsics.size_y : m_kinfu->rows();
+  const uint cols = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->cols();
   const uint size = rows * cols;
 
-  if (!shiftNear(view_pose,req->tsdf_center_distance))
+  if (!shiftNear(view_pose,req->tsdf_center_distance,req->shift_distance_threshold))
     return; // error or shutting down
 
+  m_raycaster->setWithKnown(true);
+  m_raycaster->setWithVertexMap(true);
+
   ROS_INFO("kinfu: generating scene...");
-  m_raycaster->run ( m_kinfu->volume (), view_pose, m_kinfu->getCyclicalBufferStructure (), true);
+  m_raycaster->run ( m_kinfu->volume (), view_pose, m_kinfu->getCyclicalBufferStructure ());
 
   ROS_INFO("kinfu: downloading data...");
   int useless_cols;
@@ -599,12 +612,12 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
     cloud->resize(size);
     for (uint i = 0; i < size; i++)
     {
-      if (intensity_host[i] < -0.5)
+      if (intensity_host[i] == 0.0)
       {
         (*cloud)[i].x = NAN;
         (*cloud)[i].y = NAN;
         (*cloud)[i].z = NAN;
-        (*cloud)[i].intensity = intensity_host[i];
+        (*cloud)[i].intensity = 0.0;
         continue;
       }
 
@@ -623,40 +636,45 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
 
   if (request_bounding_box || request_sphere)
   {
-    ROS_INFO("kinfu: Applying bounding box...");
+    ROS_INFO("kinfu: Applying bounding box(%s) or sphere(%s)...",
+             request_bounding_box ? "Y" : "N",request_sphere ? "Y" : "N");
     const Eigen::Vector3f bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
     const Eigen::Vector3f bbox_max(req->bounding_box_max.x,req->bounding_box_max.y,req->bounding_box_max.z);
 
     const Eigen::Vector3f sphere_center(req->sphere_center.x,req->sphere_center.y,req->sphere_center.z);
     const float sphere_radius = req->sphere_radius;
 
-    cloud->reserve(size);
+    cloud->resize(size);
     for (uint i = 0; i < size; i++)
     {
-      if (intensity_host[i] < -0.5 || std::isnan(intensity_host[i]))
-        continue;
+      bool ok = true;
+      if (intensity_host[i] == 0.0 || std::isnan(intensity_host[i]))
+        ok = false;
 
       const Eigen::Vector3f ept(view_host[i],view_host[i + size],view_host[i + size * 2]);
       if (std::isnan(ept.x()) || std::isnan(ept.y()) || std::isnan(ept.z()))
-        continue;
+        ok = false;
 
       const Eigen::Vector3f tpt = m_reverse_initial_transformation * (ept + cycl_o);
       if (request_bounding_box)
         if ((tpt.array() < bbox_min.array()).any() || (tpt.array() > bbox_max.array()).any())
-          continue;
+          ok = false;
 
       if (request_sphere)
         if ((tpt - sphere_center).squaredNorm() > sphere_radius * sphere_radius)
-          continue;
+          ok = false;
 
       pcl::PointXYZI ppt;
-      ppt.x = tpt.x(); ppt.y = tpt.y(); ppt.z = tpt.z(); ppt.intensity = intensity_host[i];
-      cloud->push_back(ppt);
+      if (ok)
+        { ppt.x = tpt.x(); ppt.y = tpt.y(); ppt.z = tpt.z(); ppt.intensity = intensity_host[i]; }
+      else
+        { ppt.x = NAN; ppt.y = NAN; ppt.z = NAN; ppt.intensity = 0.0; }
+      (*cloud)[i] = ppt;
       }
 
-    cloud->width = cloud->size();
-    cloud->height = 1;
-    cloud->is_dense = true;
+    cloud->width = cols;
+    cloud->height = rows;
+    cloud->is_dense = false;
   }
 
   ROS_INFO("kinfu: Sending message...");
@@ -778,7 +796,8 @@ void WorldDownloadManager::extractVoxelCountGenericWorker(kinfu_msgs::KinfuTsdfR
 
 void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
-  ROS_INFO("kinfu: Extract Voxel Count Views Worker started.");
+  ROS_INFO("kinfu: Extract Voxel Count/Score Views Worker started.");
+  const ros::Time start_time = ros::Time::now();
   // prepare with same header
   kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult);
   resp->tsdf_header = req->tsdf_header;
@@ -788,6 +807,10 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
     ROS_ERROR("kinfu: Extract Voxel Count Views worker: did you mean the Generic version?");
     return;
     }
+
+  const bool score_requested = uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_VIEW_SCORE);
+  if (score_requested)
+    ROS_INFO("kinfu: extractVoxelCountViewsWorker: scores will be computed.");
 
   Eigen::Affine3f center_pose = m_reverse_initial_transformation.inverse();
 
@@ -811,93 +834,129 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
 
   const bool has_intrinsics = req->request_camera_intrinsics;
 
-  resp->uint_values.data.resize(view_poses.size() * 2,0);
-
   const bool has_bounding_box = req->request_bounding_box;
   Eigen::Vector3f bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
   Eigen::Vector3f bbox_max(req->bounding_box_max.x,req->bounding_box_max.y,req->bounding_box_max.z);
 
   const bool has_sphere = req->request_sphere;
   Eigen::Vector3f sphere_center(req->sphere_center.x,req->sphere_center.y,req->sphere_center.z);
-  const float sphere_radius = req->sphere_radius;
+  float sphere_radius = req->sphere_radius;
 
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
     return; // shutting down or synchronization error
 
-  const uint rows = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->rows();
-  const uint cols = has_intrinsics ? req->camera_intrinsics.size_y : m_kinfu->cols();
+  const uint rows = has_intrinsics ? req->camera_intrinsics.size_y : m_kinfu->rows();
+  const uint cols = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->cols();
   const uint size = rows * cols;
 
   const Eigen::Vector3f cycl_o(m_kinfu->getCyclicalBufferStructure()->origin_metric.x,
                                m_kinfu->getCyclicalBufferStructure()->origin_metric.y,
                                m_kinfu->getCyclicalBufferStructure()->origin_metric.z);
 
+  initRaycaster(has_intrinsics,req->camera_intrinsics,
+    req->request_bounding_box_view,req->bounding_box_view_min,req->bounding_box_view_max);
+
   if (has_bounding_box)
   {
-    Eigen::Vector3f t_bbox_min = m_reverse_initial_transformation.inverse() * bbox_min - cycl_o;
-    Eigen::Vector3f t_bbox_max = m_reverse_initial_transformation.inverse() * bbox_max - cycl_o;
+    Eigen::Vector3f t_bbox_min = m_reverse_initial_transformation.inverse() * bbox_min;
+    Eigen::Vector3f t_bbox_max = m_reverse_initial_transformation.inverse() * bbox_max;
     bbox_min = t_bbox_min.array().min(t_bbox_max.array());
     bbox_max = t_bbox_min.array().max(t_bbox_max.array());
     bbox_min -= Eigen::Vector3f::Ones() * VOXEL_EPSILON;
     bbox_min += Eigen::Vector3f::Ones() * VOXEL_EPSILON;
+    ROS_INFO_STREAM("kinfu: ray caster: bounding box filter at [" <<
+                    bbox_min.transpose() << "]-[" << bbox_max.transpose() << "]");
+    m_raycaster->setBoundingBoxFilter(bbox_min,bbox_max);
   }
   if (has_sphere)
-    sphere_center = m_reverse_initial_transformation.inverse() * sphere_center - cycl_o;
+  {
+    sphere_center = m_reverse_initial_transformation.inverse() * sphere_center;
+    sphere_radius = sphere_radius + VOXEL_EPSILON;
+    ROS_INFO_STREAM("kinfu: raycaster: sphere filter at [" << sphere_center.transpose() << "] " << sphere_radius);
+    m_raycaster->setSphereFilter(sphere_center,sphere_radius);
+  }
 
-  initRaycaster(has_intrinsics,req->camera_intrinsics,
-    req->request_bounding_box_view,req->bounding_box_view_min,req->bounding_box_view_max);
-
-  if (!shiftNear(center_pose,req->tsdf_center_distance))
+  const ros::Time shiftnear_time_start = ros::Time::now();
+  if (!shiftNear(center_pose,req->tsdf_center_distance,req->shift_distance_threshold))
     return; // error or shutting down
+  const ros::Duration shiftnear_time = ros::Time::now() - shiftnear_time_start;
 
-  ROS_INFO("kinfu: evaluating poses...");
+  m_raycaster->setWithKnown(true);
+  m_raycaster->setWithVertexMap(false);
+  m_raycaster->setWithVoxelIds(false);
+
+  if (!score_requested)
+    resp->uint_values.data.resize(view_poses.size() * 2,0);
+  else
+    resp->float_values.data.resize(view_poses.size() * 3,0.0);
+
+  ros::Duration raycast_time(0.0);
+  ros::Duration counter_time(0.0);
+  ros::Duration download_time(0.0);
+
+  ROS_INFO("kinfu: evaluating %d poses...",int(view_poses.size()));
   for (uint i = 0; i < view_poses.size(); i++)
   {
-    m_raycaster->run ( m_kinfu->volume (), view_poses[i], m_kinfu->getCyclicalBufferStructure (), true);
+    const ros::Time raycast_time_start = ros::Time::now();
+    m_raycaster->run ( m_kinfu->volume (), view_poses[i], m_kinfu->getCyclicalBufferStructure ());
+    raycast_time += ros::Time::now() - raycast_time_start;
 
+    const ros::Time download_time_start = ros::Time::now();
     int useless_cols;
     std::vector<float> intensity_host(size);
     m_raycaster->getKnownMap().download (intensity_host,useless_cols);
+    download_time += ros::Time::now() - download_time_start;
 
-    std::vector<float> view_host;
-
-    if (has_bounding_box || has_sphere)
+    const ros::Time counter_time_start = ros::Time::now();
+    if (!score_requested)
     {
-      view_host.resize(size * 3);
-      m_raycaster->getVertexMap().download (view_host,useless_cols);
-    }
-
-    const float sqr_sphere_radius = SQR(sphere_radius + VOXEL_EPSILON);
-
-    for (uint h = 0; h < size; h++)
-    {
-      if (std::isnan(intensity_host[h]) || intensity_host[h] < -0.5)
-        continue;
-
-      if (has_bounding_box || has_sphere)
+      for (uint h = 0; h < size; h++)
       {
-        const Eigen::Vector3f ept(view_host[h],view_host[h + size],view_host[h + size * 2]);
-        if (std::isnan(ept.x()) || std::isnan(ept.y()) || std::isnan(ept.z()))
+        if (std::isnan(intensity_host[h]) || intensity_host[h] == 0.0)
           continue;
 
-        if (has_bounding_box)
-          if ((ept.array() < bbox_min.array()).any() || (ept.array() > bbox_max.array()).any())
-            continue;
-
-        if (has_sphere)
-          if ((ept - sphere_center).squaredNorm() > sqr_sphere_radius)
-            continue;
+        if (intensity_host[h] > 0.0)
+          resp->uint_values.data[i * 2] += 1;       // occupied
+        else
+          resp->uint_values.data[(i * 2) + 1] += 1; // unknown
       }
-
-      if (intensity_host[h] > 0.5)
-        resp->uint_values.data[i * 2] += 1;       // occupied
-      else
-        resp->uint_values.data[(i * 2) + 1] += 1; // unknown
     }
+    else
+    {
+      const float occ_weight = req->occupied_weight;
+      const float occ_dist_weight = req->occupied_distance_weight;
+      const float unk_weight = req->unknown_weight;
+      const float unk_dist_weight = req->unknown_distance_weight;
+      for (uint h = 0; h < size; h++)
+      {
+        if (std::isnan(intensity_host[h]) || intensity_host[h] == 0.0)
+          continue;
+
+        const float intensity = intensity_host[h];
+        if (intensity > 0.0) // occupied
+        {
+          resp->float_values.data[i * 3 + 1] += 1.0;
+          resp->float_values.data[i * 3] += occ_weight + SQR(occ_dist_weight * std::abs(intensity));
+        }
+        else // unknown
+        {
+          resp->float_values.data[i * 3 + 2] += 1.0;
+          resp->float_values.data[i * 3] += unk_weight + SQR(unk_dist_weight * std::abs(intensity));
+        }
+      }
+    }
+    counter_time += ros::Time::now() - counter_time_start;
   }
 
   unlockKinfu();
+  const ros::Duration diff_time = ros::Time::now() - start_time;
+  ROS_INFO_STREAM("Evaluation complete in " << diff_time << " seconds:\n" <<
+                  "  shifting: " << shiftnear_time << " s\n" <<
+                  "  raycast:  " << raycast_time << " s\n" <<
+                  "  download: " << download_time << " s\n" <<
+                  "  counting: " << counter_time << " s\n" <<
+                  "  unknown:  " << diff_time - (shiftnear_time + raycast_time + download_time + counter_time));
 
   ROS_INFO("kinfu: Sending message...");
   resp->header.frame_id = m_reference_frame_name;
@@ -1031,8 +1090,6 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
 
 void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
-  const bool edges_only = uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS);
-
   ROS_INFO("kinfu: Extract Border Points Worker started.");
   // prepare with same header
   kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
@@ -1066,10 +1123,15 @@ void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfReques
   m_kinfu->syncKnownPoints();
 
   PointCloudXYZNormal::ConstPtr cloud;
-  if (edges_only)
+  if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS))
     cloud = m_incomplete_points_listener->GetBorderCloud();
-  else
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_FRONTIER_POINTS))
     cloud = m_incomplete_points_listener->GetFrontierCloud();
+  else if (uint(req->tsdf_header.request_type) == uint(req->tsdf_header.REQUEST_TYPE_GET_SURFACE_POINTS))
+    cloud = m_incomplete_points_listener->GetSurfacesCloud();
+  else
+    ROS_ERROR("kinfu: extractBorderPointsWorker: unknown extraction %u type in request!",
+              uint(req->tsdf_header.request_type));
 
   Eigen::Affine3f scale_down = Eigen::Affine3f::Identity();
   scale_down.linear() *= m_kinfu->getVoxelSize();
@@ -1078,7 +1140,8 @@ void WorldDownloadManager::extractBorderPointsWorker(kinfu_msgs::KinfuTsdfReques
 
   if (!cloud)
   {
-    ROS_ERROR("kinfu: incomplete point listener returned a NULL cloud, is incomplete point extraction enabled?");
+    ROS_ERROR("kinfu: incomplete point listener returned a NULL cloud, is the correct "
+              "incomplete/surface point extraction enabled?");
     return;
   }
 

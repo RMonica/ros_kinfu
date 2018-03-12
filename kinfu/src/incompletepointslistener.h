@@ -59,10 +59,7 @@ class TIncompletePointsListener: public pcl::gpu::kinfuLS::CyclicalBuffer::Incom
   typedef boost::shared_ptr<TIncompletePointsListener> Ptr;
   typedef boost::shared_ptr<const TIncompletePointsListener> ConstPtr;
 
-  bool acceptsType(const ListenerType type) const
-    {
-    return m_accepted_types.find(type) != m_accepted_types.end();
-    }
+  bool acceptsType(const ListenerType type) const;
 
   void onAddSlice(const PointCloudXYZNormal::ConstPtr cloud, const ListenerType type);
 
@@ -73,6 +70,7 @@ class TIncompletePointsListener: public pcl::gpu::kinfuLS::CyclicalBuffer::Incom
 
   PointXYZNormalCloud::ConstPtr GetBorderCloud() {return m_border_cloud; }
   PointXYZNormalCloud::ConstPtr GetFrontierCloud() {return m_frontiers_cloud; }
+  PointXYZNormalCloud::ConstPtr GetSurfacesCloud() {return m_surfaces_cloud; }
 
   private:
   PointXYZNormalCloud::Ptr ClearSphereCloud(const PointXYZNormalCloud::ConstPtr cloud,
@@ -83,6 +81,7 @@ class TIncompletePointsListener: public pcl::gpu::kinfuLS::CyclicalBuffer::Incom
   std::set<ListenerType> m_accepted_types;
   PointXYZNormalCloud::Ptr m_border_cloud;
   PointXYZNormalCloud::Ptr m_frontiers_cloud;
+  PointXYZNormalCloud::Ptr m_surfaces_cloud;
   };
 
 #endif // INCOMPLETEPOINTSLISTENER_H

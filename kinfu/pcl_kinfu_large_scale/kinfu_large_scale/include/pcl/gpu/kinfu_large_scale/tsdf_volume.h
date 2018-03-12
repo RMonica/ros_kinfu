@@ -154,10 +154,10 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         reset ();
 
         void
-        clearSphere(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,float radius);
+        clearSphere(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,float radius,bool set_to_empty);
 
         void
-        clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max);
+        clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
 
         /** \brief Generates cloud using CPU (downloads volumetric representation to CPU memory)
           * \param[out] cloud output array for cloud
@@ -198,7 +198,7 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
         size_t
         fetchIncompletePointsAsCloud (DeviceArray<PointType>& cloud_buffer_xyz, DeviceArray<PointType>& cloud_buffer_normals,
-          const tsdf_buffer* buffer, const bool edges_only,
+          const tsdf_buffer* buffer, const int type,
           DeviceArray2D<int>& last_data_transfer_matrix, int& finished) const;
 
         /** \brief Generates cloud using GPU in connected6 mode only
@@ -216,9 +216,16 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
           DeviceArray2D<int>& last_data_transfer_matrix,const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
           int offset_x, int offset_y, int offset_z ) const;
 
+        enum FetchIncompleteType
+        {
+          FETCH_INCOMPLETE_TYPE_FRONTIERS = 0,
+          FETCH_INCOMPLETE_TYPE_EDGES = 1,
+          FETCH_INCOMPLETE_TYPE_SURFACES = 2,
+        };
+
         PointCloudXYZNormal::Ptr
         fetchIncompletePointsAsPointCloud (DeviceArray<PointType>& cloud_buffer_xyz, DeviceArray<PointType>& cloud_buffer_normals,
-          const bool edges_only, DeviceArray2D<int>& last_data_transfer_matrix, const pcl::gpu::kinfuLS::tsdf_buffer* buffer) const;
+          const int edges_only, DeviceArray2D<int>& last_data_transfer_matrix, const pcl::gpu::kinfuLS::tsdf_buffer* buffer) const;
 
         /** \brief Computes normals as gradient of tsdf for given points
           * \param[in] cloud Points where normals are computed.

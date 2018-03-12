@@ -205,6 +205,17 @@ class TQueuedUintArrayResponse: public TQueuedResponse<std_msgs::UInt64MultiArra
   }
 };
 
+class TQueuedFloatArrayResponse: public TQueuedResponse<std_msgs::Float32MultiArray>
+{
+  public:
+  TQueuedFloatArrayResponse(ros::NodeHandle & nh,
+    const kinfu_msgs::RequestResult & resp):
+    TQueuedResponse(nh,resp.tsdf_header.request_source_name)
+  {
+    m_data = resp.float_values;
+  }
+};
+
 class TQueuedGridResponse: public TQueuedResponse<std_msgs::Float32MultiArray>
 {
   public:
@@ -279,6 +290,14 @@ void RequestManager::SendResponse(const kinfu_msgs::RequestResultPtr & response_
   else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_BORDER_POINTS)
   {
     m_queue.push_back(PQueuedResponse(new TQueuedXYZNormalCloudResponse(m_nh,response)));
+  }
+  else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_SURFACE_POINTS)
+  {
+    m_queue.push_back(PQueuedResponse(new TQueuedXYZNormalCloudResponse(m_nh,response)));
+  }
+  else if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_GET_VIEW_SCORE)
+  {
+    m_queue.push_back(PQueuedResponse(new TQueuedFloatArrayResponse(m_nh,response)));
   }
   else
     ROS_ERROR("kinfu_output: received unknown response type %u.",uint(response.tsdf_header.request_type));

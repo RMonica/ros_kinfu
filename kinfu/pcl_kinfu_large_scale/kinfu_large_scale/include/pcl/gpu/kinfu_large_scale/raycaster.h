@@ -67,7 +67,8 @@ namespace pcl
         typedef boost::shared_ptr<RayCaster> Ptr;
         typedef pcl::gpu::DeviceArray2D<float> MapArr;
         typedef pcl::gpu::DeviceArray2D<PixelRGB> View;
-        typedef pcl::gpu::DeviceArray2D<unsigned short> Depth;     
+        typedef pcl::gpu::DeviceArray2D<unsigned short> Depth;
+        typedef pcl::gpu::DeviceArray2D<int> Indices;
 
         /** \brief Image with height */ 
         const int cols, rows;      
@@ -93,9 +94,31 @@ namespace pcl
         setBoundingBox(const Eigen::Vector3f & bbox_min,const Eigen::Vector3f & bbox_max)
           {bbox_min_ = bbox_min; bbox_max_= bbox_max; has_bbox_ = true; }
 
-        /** \brief clear bounding box */
+        /** \brief clear bounding box flag */
         void
         clearBoundingBox() {has_bbox_ = false; }
+
+        void
+        setBoundingBoxFilter(const Eigen::Vector3f & bbox_min,const Eigen::Vector3f & bbox_max)
+          {filter_data_.bbox_min = bbox_min; filter_data_.bbox_max = bbox_max; filter_data_.has_bbox = true; }
+
+        void
+        setSphereFilter(const Eigen::Vector3f & center,const float radius)
+          {filter_data_.sphere_center = center; filter_data_.sphere_radius = radius; filter_data_.has_sphere = true; }
+
+        void clearFilter()
+          {filter_data_ = FilterData(); }
+
+        /** \brief Extracts signed distance from the sensor (positive if occupied, negative if unknown). */
+        void setWithKnown(const bool wk)
+          {with_known_ = wk; }
+
+        /** \brief If false, no vertex map will be extracted. */
+        void setWithVertexMap(const bool wp)
+          {with_vertex_ = wp; }
+
+        void setWithVoxelIds(const bool wv)
+          {with_voxel_ids_ = wv; }
 
         /** \brief set raycast step (-1 for default) */
         void
@@ -105,9 +128,9 @@ namespace pcl
           * \param[in] volume tsdf volume container
           * \param[in] camera_pose camera pose
           * \param buffer
-          */ 
+          */
         void 
-        run(const TsdfVolume& volume, const Eigen::Affine3f& camera_pose, tsdf_buffer* buffer, bool with_known = false);
+        run(const TsdfVolume& volume, const Eigen::Affine3f& camera_pose, tsdf_buffer* buffer);
 
         /** \brief Generates scene view using data raycasted by run method. So call it before.
           * \param[out] view output array for RGB image        
@@ -140,6 +163,9 @@ namespace pcl
         MapArr
         getKnownMap() const {return known_map_; }
 
+        Indices
+        getVoxelIdsMap() const {return voxel_ids_map_; }
+
         void
         setMinRange(float range) {min_range_ = range; }
 
@@ -165,6 +191,9 @@ namespace pcl
         /** \brief known status of 3D points*/
         MapArr known_map_;
 
+        /** \brief voxel indices of 3D points*/
+        Indices voxel_ids_map_;
+
         /** \brief camera pose from which raycasting was done */
         Eigen::Affine3f camera_pose_;
 
@@ -175,6 +204,26 @@ namespace pcl
         bool has_bbox_;
         Eigen::Vector3f bbox_min_;
         Eigen::Vector3f bbox_max_;
+
+        struct FilterData
+        {
+          bool has_bbox;
+          Eigen::Vector3f bbox_min;
+          Eigen::Vector3f bbox_max;
+
+          bool has_sphere;
+          Eigen::Vector3f sphere_center;
+          float sphere_radius;
+
+          FilterData(): has_bbox(false), has_sphere(false) {}
+        };
+
+        /** \brief voxels outside the filter are out of range */
+        FilterData filter_data_;
+
+        bool with_known_;
+        bool with_vertex_;
+        bool with_voxel_ids_;
 
         float raycast_step_;
 

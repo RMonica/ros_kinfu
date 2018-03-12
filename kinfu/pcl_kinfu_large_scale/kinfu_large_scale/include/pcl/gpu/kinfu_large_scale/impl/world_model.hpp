@@ -124,7 +124,7 @@ pcl::kinfuLS::WorldModel<PointT>::getWorldAsCubes (const double size, std::vecto
   std::vector<int> indices;
   pcl::removeNaNFromPointCloud ( *world_, *world_, indices);
 	
-  PCL_INFO ("World contains %d points after nan removal.\n", world_->points.size ());
+  PCL_INFO ("  World contains %d points after nan removal.\n", world_->points.size ());
   
 
   // check cube size value
@@ -135,7 +135,7 @@ pcl::kinfuLS::WorldModel<PointT>::getWorldAsCubes (const double size, std::vecto
 	cubeSide = 512.0f;
   }
 
-  std::cout << "cube size is set to " << cubeSide << std::endl;
+  PCL_INFO("  cube size is set to %f.\n",float(cubeSide));
 
   // check overlap value
   double step_increment = 1.0f - overlap;
@@ -155,68 +155,70 @@ pcl::kinfuLS::WorldModel<PointT>::getWorldAsCubes (const double size, std::vecto
   PointT min, max;
   pcl::getMinMax3D(*world_, min, max);
 
-  PCL_INFO ("Bounding box for the world: \n\t [%f - %f] \n\t [%f - %f] \n\t [%f - %f] \n", min.x, max.x, min.y, max.y, min.z, max.z);
+  PCL_INFO ("  Bounding box for the world: \n\t [%f - %f] \n\t [%f - %f] \n\t [%f - %f] \n", min.x, max.x, min.y, max.y, min.z, max.z);
 
-  PointT origin = min;
+  const double incrementSide = cubeSide * step_increment;
+  const size_t estimate_size_x = std::ceil((max.x - min.x) / incrementSide);
+  const size_t estimate_size_y = std::ceil((max.y - min.y) / incrementSide);
+  const size_t estimate_size_z = std::ceil((max.z - min.z) / incrementSide);
+
+  PCL_INFO("  Estimated cube voxelgrid: %dx%dx%d\n", estimate_size_x, estimate_size_y, estimate_size_z);
   
   // clear returned vectors
-  cubes.clear();
-  transforms.clear();
+  cubes.resize(estimate_size_x * estimate_size_y * estimate_size_z);
+  transforms.resize(estimate_size_x * estimate_size_y * estimate_size_z);
 
-  // iterate with box filter
-  while (origin.x < max.x)
+  const size_t world_size = world_->size();
+  for (size_t i = 0; i < world_size; i++)
   {
-	origin.y = min.y;
-	while (origin.y < max.y)
-	{
-	  origin.z = min.z;
-	  while (origin.z < max.z)
-	  {
-		// extract cube here
-		PCL_INFO ("Extracting cube at: [%f, %f, %f].\n",  origin.x,  origin.y,  origin.z);
+    const PointT & ipt = (*world_)[i];
+    const int start_x = std::max<int>(0,(ipt.x - min.x - cubeSide) / incrementSide);
+    const int start_y = std::max<int>(0,(ipt.y - min.y - cubeSide) / incrementSide);
+    const int start_z = std::max<int>(0,(ipt.z - min.z - cubeSide) / incrementSide);
+    const int end_x = std::min<int>(estimate_size_x,(ipt.x - min.x) / incrementSide);
+    const int end_y = std::min<int>(estimate_size_y,(ipt.y - min.y) / incrementSide);
+    const int end_z = std::min<int>(estimate_size_z,(ipt.z - min.z) / incrementSide);
+    for (int iz = start_z; iz <= end_z; iz++)
+      for (int iy = start_y; iy <= end_y; iy++)
+        for (int ix = start_x; ix <= end_x; ix++)
+        {
+          const Eigen::Vector3f transform(min.x + ix * incrementSide,
+                                          min.y + iy * incrementSide,
+                                          min.z + iz * incrementSide);
+          if (ipt.x >= transform.x() && ipt.x < (transform.x() + cubeSide) &&
+              ipt.y >= transform.y() && ipt.y < (transform.y() + cubeSide) &&
+              ipt.z >= transform.z() && ipt.z < (transform.z() + cubeSide))
+          {
+            const size_t i3 = ix + iy * estimate_size_x + iz * estimate_size_x * estimate_size_y;
+            PointCloudPtr & box = cubes[i3];
+            if (!box)
+            {
+              PCL_INFO ("  Creating cube at: [%f, %f, %f].\n",  transform.x(),  transform.y(),  transform.z());
+              transforms[i3] = transform;
+              box.reset(new pcl::PointCloud<PointT>);
+            }
 
-		// pointcloud for current cube.
-		PointCloudPtr box (new pcl::PointCloud<PointT>);
-
-                const size_t world_size = world_->size();
-                for (size_t i = 0; i < world_size; i++)
-                {
-                  const PointT & ipt = (*world_)[i];
-                  if (ipt.x >= origin.x && ipt.x < origin.x + cubeSide &&
-                      ipt.y >= origin.y && ipt.y < origin.y + cubeSide &&
-                      ipt.z >= origin.z && ipt.z < origin.z + cubeSide)
-                    box->push_back(ipt);
-                }
-
-		// also push transform along with points.
-		if(box->points.size() > 0)
-		{
-		  Eigen::Vector3f transform;
-		  transform[0] = origin.x, transform[1] = origin.y, transform[2] = origin.z;
-		  transforms.push_back(transform);
-		  cubes.push_back(box);        
-		}
-		else
-		{
-		  PCL_INFO ("Extracted cube was empty, skiping this one.\n");
-		}
-		origin.z += cubeSide * step_increment;
-	  }
-	  origin.y += cubeSide * step_increment;
-	}
-	origin.x += cubeSide * step_increment;
+            box->push_back(ipt);
+          }
+        }
   }
 
-
- /* for(int c = 0 ; c < cubes.size() ; ++c)
+  PCL_INFO("  compressing cubes.\n");
+  // compress
   {
-	std::stringstream name;
-	name << "cloud" << c+1 << ".pcd";
-	pcl::io::savePCDFileASCII(name.str(), *(cubes[c]));
-	
-  }*/
+    size_t counter = 0;
+    for (size_t i = 0; i < cubes.size(); i++)
+      if (cubes[i])
+      {
+        transforms[counter] = transforms[i];
+        cubes[counter] = cubes[i];
+        counter++;
+      }
+    cubes.resize(counter);
+    transforms.resize(counter);
+  }
 
-  std::cout << "returning " << cubes.size() << " cubes" << std::endl;
+  PCL_INFO("  returning %d cubes.\n", int(cubes.size()));
 
 }
 
@@ -242,8 +244,6 @@ void
 pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const double origin_y, const double origin_z, const double offset_x, const double offset_y, const double offset_z, const int size_x, const int size_y, const int size_z)
 { 
   // PCL_DEBUG ("IN SETSLICE AS NANS\n");
-  
-  PointCloudPtr slice (new pcl::PointCloud<PointT>);
   
   // prepare filter limits on all dimensions  
   double previous_origin_x = origin_x;

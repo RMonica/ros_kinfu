@@ -280,7 +280,7 @@ template void WorldDownloadManager::cropCloudWithSphere<pcl::PointNormal>(const 
 template void WorldDownloadManager::cropCloudWithSphere<pcl::PointXYZ>(const Eigen::Vector3f & center,const float radius,
   typename pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud,typename pcl::PointCloud<pcl::PointXYZ>::Ptr out_cloud);
 
-bool WorldDownloadManager::marchingCubes(TsdfCloud::Ptr cloud, std::vector<Mesh::Ptr> &output_meshes) const
+bool WorldDownloadManager::marchingCubes(TsdfCloud::Ptr cloud, const float scale, std::vector<Mesh::Ptr> &output_meshes) const
 {
   try
   {
@@ -297,7 +297,7 @@ bool WorldDownloadManager::marchingCubes(TsdfCloud::Ptr cloud, std::vector<Mesh:
     wm.getWorldAsCubes (m_marching_cubes_volume_size, clouds, transforms, 0.025); // 2.5% overlapp (12 cells with a 512-wide cube)
 
     //Creating the standalone marching cubes instance
-    float volume_size = pcl::device::kinfuLS::VOLUME_SIZE / pcl::device::kinfuLS::VOLUME_X * m_marching_cubes_volume_size;
+    float volume_size = scale * m_marching_cubes_volume_size;
 
     std::cout << "Processing world with volume size set to " << volume_size << "meters\n";
 
@@ -394,19 +394,23 @@ void WorldDownloadManager::unlockKinfu()
   m_kinfu_waiting_cond.notify_all();
 }
 
-bool WorldDownloadManager::shiftNear(const Eigen::Affine3f & pose, float distance)
+bool WorldDownloadManager::shiftNear(const Eigen::Affine3f & pose, const float distance, const float distance_threshold)
 {
   ROS_INFO("kinfu: shiftNear...");
-  m_kinfu->shiftNear(pose,distance);
+
+  m_kinfu->shiftNear(pose,distance,distance_threshold);
   if (!m_kinfu->isShiftComplete()) // shifting is waiting for cube
   {
+    uint64 counter = 0;
     ros::Rate rate(10);
     do
     {
       rate.sleep();
-      m_kinfu->shiftNear(pose,distance);
+      m_kinfu->shiftNear(pose,distance,distance_threshold);
+      counter++;
     }
     while (!m_kinfu->isShiftComplete() || ros::isShuttingDown());
+    ROS_INFO("kinfu: shiftNear complete after %d iterations.",int(counter));
   }
 
   if (ros::isShuttingDown())
@@ -444,6 +448,10 @@ void WorldDownloadManager::initRaycaster(bool has_intrinsics,const kinfu_msgs::K
   m_raycaster->setRaycastStep(m_kinfu->volume().getTsdfTruncDist() * 0.6);
   m_raycaster->setMinRange(min_range);
   m_raycaster->setIntrinsics(fx,fy,cx,cy);
+  m_raycaster->clearFilter();
+  m_raycaster->setWithKnown(false);
+  m_raycaster->setWithVertexMap(true);
+  m_raycaster->setWithVoxelIds(false);
 
   if (has_bounding_box_view)
     {

@@ -308,6 +308,10 @@ class VoxelgridToCollisionMap
         ss >> (m_center[i]);
     }
 
+    m_collision_unknown = false;
+    m_collision_occupied = false;
+    m_collision_empty = false;
+
     m_nh.param<std::string>(PARAM_NAME_COLLISION_VALUES,param_string,PARAM_DEFAULT_COLLISION_VALUES);
     for (uint i = 0; i < param_string.size(); i++)
       switch (param_string[i])

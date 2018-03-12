@@ -62,6 +62,8 @@ namespace pcl
 
         float time_step;
         float3 volume_size;
+        int3 voxels_size;
+        int3 voxels_volume_padding;
 
         float3 cell_size;
         float3 cell_size_inv;
@@ -92,28 +94,45 @@ namespace pcl
         __device__ __forceinline__ bool
         checkInds (const int3& g) const
         {
-          return (g.x >= 0 && g.y >= 0 && g.z >= 0 && g.x < VOLUME_X && g.y < VOLUME_Y && g.z < VOLUME_Z);
+          return (g.x >= 0 && g.y >= 0 && g.z >= 0 && g.x < voxels_size.x && g.y < voxels_size.y && g.z < voxels_size.z);
         }
 
         __device__ __forceinline__ bool
-        checkCoords (const float3 & g) const
+        checkSafeInds (const int3& g) const
         {
-          return search_condition.Evaluate(g);
+          return (g.x >= voxels_volume_padding.x && g.y >= voxels_volume_padding.y && g.z >= voxels_volume_padding.z &&
+                  g.x < voxels_size.x - voxels_volume_padding.x &&
+                  g.y < voxels_size.y - voxels_volume_padding.y &&
+                  g.z < voxels_size.z - voxels_volume_padding.z);
+        }
+
+        __device__ __forceinline__ void
+        shift_coords (int & x, int & y, int & z, const pcl::gpu::kinfuLS::tsdf_buffer & buffer) const
+        {
+          x += buffer.origin_GRID.x;
+          y += buffer.origin_GRID.y;
+          z += buffer.origin_GRID.z;
+          if (x >= buffer.voxels_size.x)
+            x -= buffer.voxels_size.x;
+          if (y >= buffer.voxels_size.y)
+            y -= buffer.voxels_size.y;
+          if (z >= buffer.voxels_size.z)
+            z -= buffer.voxels_size.z;
         }
 
         __device__ __forceinline__ float
         readTsdf (int x, int y, int z, const pcl::gpu::kinfuLS::tsdf_buffer & buffer) const
         {
+          shift_coords(x,y,z,buffer);
           const short2* pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
-          shift_tsdf_pointer(&pos, buffer);
           return unpack_tsdf (*pos);
         }
 
         __device__ __forceinline__ void
         readTsdf (int x, int y, int z, const pcl::gpu::kinfuLS::tsdf_buffer & buffer,float& tsdf, int& weight) const
         {
+          shift_coords(x,y,z,buffer);
           const short2* pos = &(volume.ptr (buffer.voxels_size.y * z + y)[x]);
-          shift_tsdf_pointer(&pos, buffer);
           unpack_tsdf (*pos,tsdf,weight);
         }
 
@@ -248,6 +267,7 @@ namespace pcl
           store_action.Init(*this,x,y);
 
           const float3 ray_start = tcurr;
+          float3 norm_ray_next = normalized (get_ray_next (x, y));
           float3 ray_dir = normalized (Rcurr * get_ray_next (x, y));
 
           //ensure that it isn't a degenerate case
@@ -281,18 +301,23 @@ namespace pcl
 
           float curr_time_step = time_step;
 
+          bool zero_crossing = false;
+
           for (; time_curr < max_time; time_curr += curr_time_step)
           {
             float tsdf_prev = tsdf;
             int weight_prev = weight;
 
-            const float3 world_pt = ray_start + ray_dir * (time_curr + time_step);
-            if (!checkCoords (world_pt))
+            const float3 world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
+            if (!search_condition.Evaluate(world_pt))
               continue;
 
             g = getVoxelFromPoint (world_pt);
             if (!checkInds (g))
               return;
+
+            if (!checkSafeInds(g))
+              continue;
 
             readTsdf (g.x, g.y, g.z, buffer, tsdf, weight);
 
@@ -315,19 +340,22 @@ namespace pcl
             if (tsdf_prev < 0.f && tsdf > 0.f)
               return;
 
-            const bool zero_crossing = store_condition.Evaluate(tsdf_prev,tsdf,weight_prev,weight);
-            if (zero_crossing && time_curr < min_range)
+            zero_crossing = store_condition.Evaluate(tsdf_prev,tsdf,weight_prev,weight);
+            if (zero_crossing && (time_curr * norm_ray_next.z) < min_range)
               return;
 
             if (zero_crossing)
               break; // break out of the cycle here, so Stores will be executed in sync by all threads
           }
 
-          const float3 world_pt_prev = ray_start + ray_dir * (time_curr);
-          const float3 world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
+          if (zero_crossing)
+          {
+            const float3 world_pt_prev = ray_start + ray_dir * (time_curr);
+            const float3 world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
 
-          store_action.Store(world_pt_prev,world_pt,g,tsdf,weight,time_curr,time_step,ray_start,ray_dir,
-            *this,x,y,buffer);
+            store_action.Store(world_pt_prev,world_pt,g,tsdf,weight,time_curr,time_step,ray_start,ray_dir,
+              *this,x,y,buffer);
+          }
         }
       };
 
@@ -483,33 +511,78 @@ namespace pcl
         PtrStep<float> nmap;
       };
 
-      struct NotEmptyIntensityStoreAction
+      enum // bitmask for STORE_POSE
+      {
+        STORE_POSE_NONE = 0,
+        STORE_POSE_WORLD = 1,
+        STORE_POSE_VOXEL = 2,
+      };
+
+      template <int STORE_POSE>
+      struct SignedSensorDistanceStoreAction
       {
         template <class _RayCaster>
         __device__ __forceinline__ void Init(_RayCaster & parent,int x,int y)
         {
-          parent.vmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
-          umap.ptr (y)[x] = -1.0; // empty
+          if (STORE_POSE & STORE_POSE_WORLD)
+            parent.vmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
+          if (STORE_POSE & STORE_POSE_VOXEL)
+            voxel_map.ptr (y + parent.rows)[x] = -1;
+          umap.ptr (y)[x] = 0.0; // empty
         }
 
         template <class _RayCaster>
         __device__ __forceinline__ void Store(const float3 & /*world_pt_prev*/,const float3 & world_pt,
-          const int3 & /*voxel_id*/,float /*tsdf*/,float weight,
-          float /*time_curr*/,float /*time_step*/,const float3 & /*ray_start*/,const float3 & /*ray_dir*/,
-          const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & /*buffer*/)
+          const int3 & voxel_id,float /*tsdf*/,float weight,
+          float time_curr,float /*time_step*/,const float3 & /*ray_start*/,const float3 & /*ray_dir*/,
+          const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & buffer)
         {
-          parent.vmap.ptr (y       )[x] = world_pt.x;
-          parent.vmap.ptr (y + parent.rows)[x] = world_pt.y;
-          parent.vmap.ptr (y + 2 * parent.rows)[x] = world_pt.z;
+          if (filter.has_bbox)
+          {
+            if (world_pt.x < filter.bbox_min.x || world_pt.y < filter.bbox_min.y || world_pt.z < filter.bbox_min.z ||
+                world_pt.x >= filter.bbox_max.x || world_pt.y >= filter.bbox_max.y || world_pt.z >= filter.bbox_max.z)
+              return;
+          }
+
+          if (filter.has_sphere)
+          {
+            float3 diff = world_pt - filter.sphere_center;
+            float sqnorm = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+            if (sqnorm > filter.sphere_radius * filter.sphere_radius)
+              return;
+          }
+
+          if (STORE_POSE & STORE_POSE_WORLD)
+          {
+            parent.vmap.ptr (y       )[x] = world_pt.x;
+            parent.vmap.ptr (y + parent.rows)[x] = world_pt.y;
+            parent.vmap.ptr (y + 2 * parent.rows)[x] = world_pt.z;
+          }
+
+          if (STORE_POSE & STORE_POSE_VOXEL)
+          {
+            voxel_map.ptr (y       )[x] = voxel_id.x;
+            voxel_map.ptr (y + parent.rows)[x] = voxel_id.y;
+            voxel_map.ptr (y + 2 * parent.rows)[x] = voxel_id.z;
+          }
 
           if (weight == 0)
-            umap.ptr(y)[x] = 0.0; // unknown
+            umap.ptr(y)[x] = -time_curr; // unknown
           else
-            umap.ptr(y)[x] = 1.0; // occupied
+            umap.ptr(y)[x] = time_curr; // occupied
         }
 
         PtrStep<float> umap; // intensity values
+        PtrStep<int> voxel_map;
+        RaycastFilter filter;
       };
+
+      typedef SignedSensorDistanceStoreAction<STORE_POSE_NONE>
+        SignedSensorDistanceNoPoseStoreAction;
+      typedef SignedSensorDistanceStoreAction<STORE_POSE_WORLD>
+        SignedSensorDistanceWithPoseStoreAction;
+      typedef SignedSensorDistanceStoreAction<STORE_POSE_VOXEL>
+        SignedSensorDistanceWithVoxelIndexStoreAction;
 
       template <class StoreCondition,class StoreAction,class SearchCondition>
       __global__ void
@@ -534,6 +607,8 @@ namespace pcl
         rc.time_step = tranc_dist * 0.8f;
 
         rc.volume_size = volume_size;
+        rc.voxels_size = buffer->voxels_size;
+        rc.voxels_volume_padding = buffer->voxels_volume_padding;
 
         rc.cell_size.x = volume_size.x / buffer->voxels_size.x;
         rc.cell_size.y = volume_size.y / buffer->voxels_size.y;
@@ -567,8 +642,8 @@ namespace pcl
 
       void
       raycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
-                            float tranc_dist, float min_range, const float3& volume_size,
-                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap)
+               float tranc_dist, float min_range, const float3& volume_size,
+               const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& nmap)
       {
         InterpolatePointAndNormalStoreAction ipan;
         ipan.nmap = nmap;
@@ -579,26 +654,94 @@ namespace pcl
 
       void
       unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
-                            float tranc_dist, float min_range, const float3& volume_size,
-                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap)
+                  float tranc_dist, float min_range, const float3& volume_size,
+                  const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                  const RaycastFilter & filter, MapArr& vmap, MapArr& umap)
       {
-        NotEmptyIntensityStoreAction nesc;
+        SignedSensorDistanceWithPoseStoreAction nesc;
         nesc.umap = umap;
-        templatedRaycast<NotEmptyStoreCondition,NotEmptyIntensityStoreAction,TrueSearchCondition>(
+        nesc.filter = filter;
+        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithPoseStoreAction,TrueSearchCondition>(
           intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
           NotEmptyStoreCondition(),nesc,TrueSearchCondition());
       }
 
       void
       unkRaycastBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
-                            float tranc_dist, float min_range, const float3& volume_size,
-                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap,
-                            const float3 & bbox_min,const float3 & bbox_max)
+                      float tranc_dist, float min_range, const float3& volume_size,
+                      const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                      const RaycastFilter & filter, MapArr& vmap, MapArr& umap,
+                      const float3 & bbox_min,const float3 & bbox_max)
       {
-        NotEmptyIntensityStoreAction nesc;
+        SignedSensorDistanceWithPoseStoreAction nesc;
         nesc.umap = umap;
-        templatedRaycast<NotEmptyStoreCondition,NotEmptyIntensityStoreAction,BBoxSearchCondition>
+        nesc.filter = filter;
+        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithPoseStoreAction,BBoxSearchCondition>
           (intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
+          NotEmptyStoreCondition(),nesc,BBoxSearchCondition(bbox_min,bbox_max));
+      }
+
+      void
+      unkRaycastVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                        float tranc_dist, float min_range, const float3& volume_size,
+                        const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                        const RaycastFilter & filter,
+                        MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids)
+      {
+        SignedSensorDistanceWithVoxelIndexStoreAction nesc;
+        nesc.umap = umap;
+        nesc.filter = filter;
+        nesc.voxel_map = voxel_ids;
+        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithVoxelIndexStoreAction,TrueSearchCondition>(
+          intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
+          NotEmptyStoreCondition(),nesc,TrueSearchCondition());
+      }
+
+      void
+      unkRaycastBBoxVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                            float tranc_dist, float min_range, const float3& volume_size,
+                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                            const RaycastFilter & filter,
+                            MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids,
+                            const float3 & bbox_min, const float3 & bbox_max)
+      {
+        SignedSensorDistanceWithVoxelIndexStoreAction nesc;
+        nesc.umap = umap;
+        nesc.filter = filter;
+        nesc.voxel_map = voxel_ids;
+        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithVoxelIndexStoreAction,BBoxSearchCondition>(
+          intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
+          NotEmptyStoreCondition(),nesc,BBoxSearchCondition(bbox_min,bbox_max));
+      }
+
+      void
+      unkRaycastNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                        float tranc_dist, float min_range, const float3& volume_size,
+                        const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                        const RaycastFilter & filter,
+                        MapArr& vmap, MapArr& umap)
+      {
+        SignedSensorDistanceNoPoseStoreAction nesc;
+        nesc.umap = umap;
+        nesc.filter = filter;
+        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceNoPoseStoreAction,TrueSearchCondition>(
+          intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
+          NotEmptyStoreCondition(),nesc,TrueSearchCondition());
+      }
+
+      void
+      unkRaycastBBoxNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                            float tranc_dist, float min_range, const float3& volume_size,
+                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                            const RaycastFilter & filter,
+                            MapArr& vmap, MapArr& umap,
+                            const float3 & bbox_min, const float3 & bbox_max)
+      {
+        SignedSensorDistanceNoPoseStoreAction nesc;
+        nesc.umap = umap;
+        nesc.filter = filter;
+        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceNoPoseStoreAction,BBoxSearchCondition>(
+          intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
           NotEmptyStoreCondition(),nesc,BBoxSearchCondition(bbox_min,bbox_max));
       }
     }

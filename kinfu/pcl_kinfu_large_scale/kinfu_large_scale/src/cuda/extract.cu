@@ -62,13 +62,10 @@ namespace pcl
         __device__ __forceinline__ int filter(const FullScan6& parent,
           const pcl::gpu::kinfuLS::tsdf_buffer& buffer, int x, int y, int z)
         {
-          int W;
-          float F = parent.fetch_with_rolling_buffer (x, y, z, W);
-
           bool in_black_zone =
-            ( (x >= minBounds.x && x <= maxBounds.x) ||
-              (y >= minBounds.y && y <= maxBounds.y) ||
-              ( z >= minBounds.z && z <= maxBounds.z) ) ;
+            ( (x >= minBounds.x && x < maxBounds.x) ||
+              (y >= minBounds.y && y < maxBounds.y) ||
+              (z >= minBounds.z && z < maxBounds.z) ) ;
           int local_count = 0;
 
           if (in_black_zone)
@@ -269,6 +266,121 @@ namespace pcl
         IncompletePointsExtractor() {}
       };
 
+      struct SurfacePointsExtractor
+      {
+        enum
+        {
+          MAX_LOCAL_POINTS = 1,
+          MIN_X_MARGIN = 1,
+          MIN_Y_MARGIN = 1,
+          MIN_Z_MARGIN = 1,
+        };
+        __device__ SurfacePointsExtractor(int kl):
+          knowledge_limit(kl) {}
+
+          // returns the number of points extracted
+        __device__ __forceinline__ int filter(const FullScan6& parent,
+          const pcl::gpu::kinfuLS::tsdf_buffer& buffer, int x, int y, int z)
+        {
+          int W;
+          float F = parent.fetch_with_rolling_buffer (x, y, z, W);
+
+          if (W >= knowledge_limit && F < 0.0)
+          {
+            bool found_empty = false;
+            float3 grad_tot = make_float3(0.0,0.0,0.0);
+
+            #pragma unroll
+            for (int i = 0; i < TOTAL_BEARINGS6; i++)
+            {
+              int i26 = getBearingIdById6(i);
+              int3 b = getBearingById26(i26);
+              const float nm = getNormOfBearing(b);
+
+              int Wv;
+              float Fv = parent.fetch_with_rolling_buffer (x + b.x,y + b.y,z + b.z,Wv);
+              if (Wv < knowledge_limit)
+                continue;
+
+              grad_tot = make_float3(grad_tot.x + Fv * (float(b.x) / nm),
+                                     grad_tot.y + Fv * (float(b.y) / nm),
+                                     grad_tot.z + Fv * (float(b.z) / nm));
+
+              if (Fv > 0.0)
+                found_empty = true;
+            }
+
+            if (found_empty)
+            {
+              float3 p; p.x = x; p.y = y; p.z = z;
+              float3 n; n.x = grad_tot.x; n.y = grad_tot.y; n.z = grad_tot.z;
+              points[0] = p;
+              normals[0] = normalized(n);
+              return 1;
+            }
+          }
+
+          return 0;
+        }
+
+        enum { TOTAL_BEARINGS26 = 26 };
+        __device__ __forceinline__ int3 getBearingById26(int id)
+        {
+          int3 result;
+          int act_id = id < 13 ? id : (id + 1); // avoid (0,0,0)
+          result.x = act_id % 3 - 1;
+          result.y = (act_id / 3) % 3 - 1;
+          result.z = (act_id / 9) % 3 - 1;
+          return result;
+        }
+        __device__ __forceinline__ float getNormOfBearing(int3 b)
+        {
+          int sn = abs(b.x) + abs(b.y) + abs(b.z);
+          if (sn == 1) return 1.0;
+          if (sn == 2) return 1.414;
+          if (sn == 3) return 1.732;
+          return 1.0;
+        }
+        enum { TOTAL_BEARINGS6 = 6 };
+        __device__ __forceinline__ int getBearingIdById6(int id)
+        {
+          const int ids[TOTAL_BEARINGS6] = {4,21,12,13,10,15};
+          return ids[id];
+        }
+        __device__ __forceinline__ bool isBearingId6(int id)
+        {
+          const int ids[TOTAL_BEARINGS6] = {4,21,12,13,10,15};
+          #pragma unroll
+          for (int i = 0; i < TOTAL_BEARINGS6; i++)
+            if (ids[i] == id)
+              return true;
+          return false;
+        }
+
+        __device__ __forceinline__ bool isFull(const FullScan6& parent, unsigned int i)
+        {
+          return (i >= parent.output_xyz.size);
+        }
+
+        __device__ void store(const FullScan6& parent, int offset_storage, int l)
+        {
+          float x = points[l].x;
+          float y = points[l].y;
+          float z = points[l].z;
+          float nx = normals[l].x;
+          float ny = normals[l].y;
+          float nz = normals[l].z;
+          parent.store_point_normals (x, y, z, nx, ny, nz, parent.output_xyz.data, parent.output_normals.data, offset_storage);
+        }
+
+        int knowledge_limit;
+
+        float3 points[MAX_LOCAL_POINTS];
+        float3 normals[MAX_LOCAL_POINTS];
+        private:
+        SurfacePointsExtractor() {}
+      };
+
       __global__ void
       extractSliceKernel (const FullScan6 fs, int3 minBounds, int3 maxBounds)
       {
@@ -281,7 +393,14 @@ namespace pcl
       __global__ void
       extractIncompletePointsKernel (const FullScan6 fs,bool edges_only)
       {
-        IncompletePointsExtractor extractor(5,edges_only);
+        IncompletePointsExtractor extractor(1,edges_only);
+        fs.templatedExtract (extractor);
+      }
+
+      __global__ void
+      extractSurfacePointsKernel (const FullScan6 fs)
+      {
+        SurfacePointsExtractor extractor(1);
         fs.templatedExtract (extractor);
       }
 
@@ -304,7 +423,7 @@ namespace pcl
         fs.rolling_buffer = *buffer;
 
         dim3 block (FullScan6::CTA_SIZE_X, FullScan6::CTA_SIZE_Y);
-        dim3 grid (divUp (VOLUME_X, block.x), divUp (VOLUME_Y, block.y));
+        dim3 grid (divUp (buffer->voxels_size.x, block.x), divUp (buffer->voxels_size.y, block.y));
 
         //Compute slice bounds
         int newX = buffer->origin_GRID.x + shiftX;
@@ -346,8 +465,8 @@ namespace pcl
         //Z
         if (newZ >= 0)
         {
-        minBounds.z = buffer->origin_GRID.z;
-        maxBounds.z = newZ;
+          minBounds.z = buffer->origin_GRID.z;
+          maxBounds.z = newZ;
         }
         else
         {
@@ -358,37 +477,31 @@ namespace pcl
         if (minBounds.z > maxBounds.z)
           std::swap(minBounds.z, maxBounds.z);
 
-        if (minBounds.x >= 0 && minBounds.x < buffer->origin_GRID.x)
+        minBounds.x -= buffer->origin_GRID.x;
+        maxBounds.x -= buffer->origin_GRID.x;
+
+        minBounds.y -= buffer->origin_GRID.y;
+        maxBounds.y -= buffer->origin_GRID.y;
+
+        minBounds.z -= buffer->origin_GRID.z;
+        maxBounds.z -= buffer->origin_GRID.z;
+
+        if (minBounds.x < 0) // We are shifting Left
         {
-          minBounds.x += buffer->voxels_size.x - buffer->origin_GRID.x;
-          maxBounds.x += buffer->voxels_size.x - buffer->origin_GRID.x;
-        }
-        else
-        {
-          minBounds.x -= buffer->origin_GRID.x;
-          maxBounds.x -= buffer->origin_GRID.x;
+          minBounds.x += buffer->voxels_size.x;
+          maxBounds.x += buffer->voxels_size.x;
         }
 
-        if (minBounds.y >= 0 && minBounds.y < buffer->origin_GRID.y)
+        if (minBounds.y < 0) // We are shifting up
         {
-          minBounds.y += buffer->voxels_size.y - buffer->origin_GRID.y;
-          maxBounds.y += buffer->voxels_size.y - buffer->origin_GRID.y;
-        }
-        else
-        {
-          minBounds.y -= buffer->origin_GRID.y;
-          maxBounds.y -= buffer->origin_GRID.y;
+          minBounds.y += buffer->voxels_size.y;
+          maxBounds.y += buffer->voxels_size.y;
         }
 
-        if (minBounds.z >= 0 && minBounds.z < buffer->origin_GRID.z)
+        if (minBounds.z < 0) // We are shifting back
         {
-          minBounds.z += buffer->voxels_size.z - buffer->origin_GRID.z;
-          maxBounds.z += buffer->voxels_size.z - buffer->origin_GRID.z;
-        }
-        else
-        {
-          minBounds.z -= buffer->origin_GRID.z;
-          maxBounds.z -= buffer->origin_GRID.z;
+          minBounds.z += buffer->voxels_size.z;
+          maxBounds.z += buffer->voxels_size.z;
         }
 
         fs.init_globals();
@@ -406,17 +519,6 @@ namespace pcl
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
       void
-      getDataTransferCompletionMatrixSize(size_t & height, size_t & width)
-      {
-        dim3 block (FullScan6::CTA_SIZE_X, FullScan6::CTA_SIZE_Y);
-        dim3 grid (divUp (VOLUME_X, block.x), divUp (VOLUME_Y, block.y));
-        width = grid.x;
-        height = grid.y;
-      }
-
-      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-      void
       getDataTransferCompletionMatrixSize(const int3 & voxels_size,size_t & height, size_t & width)
       {
         dim3 block (FullScan6::CTA_SIZE_X, FullScan6::CTA_SIZE_Y);
@@ -429,7 +531,7 @@ namespace pcl
 
       size_t
       extractIncompletePointsAsCloud (const PtrStep<short2>& volume, const float3& volume_size,
-                           const pcl::gpu::kinfuLS::tsdf_buffer* buffer,const bool edges_only,
+                           const pcl::gpu::kinfuLS::tsdf_buffer* buffer,const int type,
                            PtrSz<PointType> output_xyz, PtrSz<float4> output_normals,
                            PtrStep<int> last_data_transfer_matrix, int & data_transfer_finished)
       {
@@ -444,12 +546,16 @@ namespace pcl
         fs.rolling_buffer = *buffer;
 
         dim3 block (FullScan6::CTA_SIZE_X, FullScan6::CTA_SIZE_Y);
-        dim3 grid (divUp (VOLUME_X, block.x), divUp (VOLUME_Y, block.y));
+        dim3 grid (divUp (buffer->voxels_size.x, block.x), divUp (buffer->voxels_size.y, block.y));
 
         fs.init_globals();
 
         // Extraction call
-        extractIncompletePointsKernel<<<grid, block>>>(fs, edges_only);
+        if (type == 0 || type == 1)
+          extractIncompletePointsKernel<<<grid, block>>>(fs, type);
+        else if (type == 2)
+          extractSurfacePointsKernel<<<grid, block>>>(fs);
+
 
         cudaSafeCall ( cudaGetLastError () );
         cudaSafeCall ( cudaDeviceSynchronize () );

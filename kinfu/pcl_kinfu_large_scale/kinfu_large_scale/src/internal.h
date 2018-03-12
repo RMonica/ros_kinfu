@@ -204,22 +204,28 @@ namespace pcl
       /**
        * @brief clear a sphere in a tsdf volume
        * @param volume the volume
+       * @param voxels_size the volume resolution
        * @param origin the current volume origin (due to volume shifting)
        * @param center the center of the sphere
        * @param radius the radius of the sphere
+       * @param set_to_empty set the sphere to empty instead of unknown
        */
       void
-      clearSphere(PtrStep<short2> volume,int3 origin,float3 center,float radius);
+      clearSphere(PtrStep<short2> volume,const int3 voxels_size,int3 origin,float3 center,float radius,
+                  const bool set_to_empty);
 
       /**
        * @brief clear a bounding box in a tsdf volume
        * @param volume the volume
+       * @param voxels_size the volume resolution
        * @param origin the current volume origin (due to volume shifting)
        * @param min the min value of the bounding box
        * @param max the max value of the bounding box
+       * @param set_to_empty set the sphere to empty instead of unknown
        */
       void
-      clearBBox(PtrStep<short2> volume,const int3& origin,const float3& min,const float3& max);
+      clearBBox(PtrStep<short2> volume,const int3 voxels_size,const int3& origin,const float3& min,const float3& max,
+                const bool set_to_empty);
 
       //first version
       /** \brief Performs Tsfg volume uptation (extra obsolete now)
@@ -287,7 +293,21 @@ namespace pcl
               const PtrStepSz<uchar3>& colors, const float3& volume_size, PtrStep<uchar4> color_volume, int max_weight = 1);
 
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-      // Raycast and view generation        
+      // Raycast and view generation
+
+      struct RaycastFilter
+      {
+        bool has_bbox;
+        bool has_sphere;
+
+        float3 bbox_min;
+        float3 bbox_max;
+        float3 sphere_center;
+        float sphere_radius;
+
+        RaycastFilter(): has_bbox(false), has_sphere(false) {}
+      };
+
       /** \brief Generation vertex and normal maps from volume for current camera pose
         * \param[in] intr camera intrinsices
         * \param[in] Rcurr current rotation
@@ -318,14 +338,44 @@ namespace pcl
       void
       unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
               const float3& volume_size,
-              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap);
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              MapArr& vmap, MapArr& umap);
+
+      void
+      unkRaycastNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
+              const float3& volume_size,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              MapArr& vmap, MapArr& umap);
 
 
       void
       unkRaycastBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
               const float3& volume_size,
-              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, MapArr& vmap, MapArr& umap,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              MapArr& vmap, MapArr& umap,
               const float3 & bbox_min,const float3 & bbox_max);
+
+      void
+      unkRaycastBBoxNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
+              const float3& volume_size,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              MapArr& vmap, MapArr& umap,
+              const float3 & bbox_min,const float3 & bbox_max);
+
+      void
+      unkRaycastVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                        float tranc_dist, float min_range, const float3& volume_size,
+                        const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                        const RaycastFilter & filter,
+                        MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids);
+
+      void
+      unkRaycastBBoxVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                            float tranc_dist, float min_range, const float3& volume_size,
+                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                            const RaycastFilter & filter,
+                            MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids,
+                            const float3 & bbox_min, const float3 & bbox_max);
 
       /** \brief Renders 3D image of the scene
         * \param[in] vmap vertex map
@@ -403,13 +453,6 @@ namespace pcl
         );
 
       /** \brief Returns the size of the data transfer matrix required by extractSliceAsCloud
-        * \param[out] height the height of the matrix
-        * \param[out] width the width of the matrix, in number of (integer) elements
-        */
-      PCL_EXPORTS void
-      getDataTransferCompletionMatrixSize(size_t & height, size_t & width);
-
-      /** \brief Returns the size of the data transfer matrix required by extractSliceAsCloud
         * \param[in] the volume size in voxels
         * \param[out] height the height of the matrix
         * \param[out] width the width of the matrix, in number of (integer) elements
@@ -419,7 +462,7 @@ namespace pcl
 
       PCL_EXPORTS size_t
       extractIncompletePointsAsCloud (const PtrStep<short2>& volume, const float3& volume_size,
-        const pcl::gpu::kinfuLS::tsdf_buffer* buffer,const bool edges_only,
+        const pcl::gpu::kinfuLS::tsdf_buffer* buffer,const int type,
         PtrSz<PointType> output_xyz, PtrSz<float4> output_normals,
         PtrStep<int> last_data_transfer_matrix, int & data_transfer_finished);
 

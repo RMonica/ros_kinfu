@@ -104,6 +104,7 @@ using sensor_msgs::CameraInfo;
 using sensor_msgs::Image;
 
 typedef unsigned int uint;
+typedef short unsigned int suint;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -310,52 +311,39 @@ class ImageSubscriber
     m_nh.getParam(PARAM_NAME_EXTRACT_TEXTURES,enable_texture_extraction);
     m_nh.getParam(PARAM_SNAME_EXTRACT_TEXTURES,enable_texture_extraction);
 
-    // message_filters instead of image_transport because of synchronization over w-lan
-    m_texture_sync = NULL;
-    m_depth_only_sync = NULL;
-
-    m_rgb_sub = NULL;
-    m_depth_sub = NULL;
-    m_info_sub = NULL;
-
     if (enable_texture_extraction)
     {
-      m_depth_sub = new message_filters::Subscriber<Image>(m_nh, depth_image_topic, 2);
-      m_info_sub  = new message_filters::Subscriber<CameraInfo>(m_nh, camera_info_topic, 2);
-      m_rgb_sub   = new message_filters::Subscriber<Image>(m_nh, image_topic, 2);
+      m_depth_sub.reset(new message_filters::Subscriber<Image>(m_nh, depth_image_topic, 2));
+      m_info_sub.reset(new message_filters::Subscriber<CameraInfo>(m_nh, camera_info_topic, 2));
+      m_rgb_sub.reset(new message_filters::Subscriber<Image>(m_nh, image_topic, 2));
 
       //the depth and the rgb cameras are not hardware synchronized
       //hence the depth and rgb images normally do not have the EXACT timestamp
       //so use approximate time policy for synchronization
-      m_texture_sync = new message_filters::Synchronizer<DRGBSync>(DRGBSync(500), *m_depth_sub, *m_info_sub, *m_rgb_sub);
+      m_texture_sync.reset(new message_filters::Synchronizer<DRGBSync>(DRGBSync(500), *m_depth_sub, *m_info_sub, *m_rgb_sub));
       m_texture_sync->registerCallback(boost::bind(&ImageSubscriber::imageCallback, this, _1, _2, _3));
       ROS_INFO("Running KinFu with texture extraction");
     }
     else
     {
-      m_depth_sub = new message_filters::Subscriber<Image>(m_nh, depth_image_topic, 1);
-      m_info_sub  = new message_filters::Subscriber<CameraInfo>(m_nh, camera_info_topic, 1);
+      m_depth_sub.reset(new message_filters::Subscriber<sensor_msgs::Image>(m_nh, depth_image_topic, 1));
+      m_info_sub.reset(new message_filters::Subscriber<sensor_msgs::CameraInfo>(m_nh, camera_info_topic, 1));
 
-      m_depth_only_sync = new message_filters::TimeSynchronizer<Image, CameraInfo>(*m_depth_sub, *m_info_sub, 500);
-      m_depth_only_sync->registerCallback(boost::bind(&ImageSubscriber::imageCallback, this, _1, _2, sensor_msgs::ImageConstPtr()));
+      m_depth_only_sync.reset(new message_filters::Synchronizer<DISync>(DISync(500), *m_depth_sub, *m_info_sub));
+      m_depth_only_sync->registerCallback(
+        boost::bind(&ImageSubscriber::imageCallback, this, _1, _2, sensor_msgs::ImageConstPtr()));
+
       ROS_INFO("Running KinFu without texture extraction");
     }
 
     m_has_image = false;
   }
 
+  sensor_msgs::CameraInfoConstPtr m_prev_info;
+
   ~ImageSubscriber()
   {
-    if (m_texture_sync)
-      delete m_texture_sync;
-    if (m_depth_only_sync)
-      delete m_depth_only_sync;
-    if (m_depth_sub)
-      delete m_depth_sub;
-    if (m_info_sub)
-      delete m_info_sub;
-    if (m_rgb_sub)
-      delete m_rgb_sub;
+
   }
 
   void imageCallback(const sensor_msgs::ImageConstPtr& depth, const sensor_msgs::CameraInfoConstPtr& cameraInfo,
@@ -367,7 +355,7 @@ class ImageSubscriber
     m_rgb = rgb;
 
     m_has_image = true;
-    m_cond.notify_one();
+    m_cond.notify_all();
   }
 
   // WARNING: lock the shared mutex before calling this
@@ -395,13 +383,15 @@ class ImageSubscriber
 
   private:
 
-  typedef message_filters::sync_policies::ApproximateTime<Image, CameraInfo, Image> DRGBSync;
-  message_filters::Synchronizer<DRGBSync>* m_texture_sync;
-  message_filters::TimeSynchronizer<Image, CameraInfo>* m_depth_only_sync;
+  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image,
+            sensor_msgs::CameraInfo, sensor_msgs::Image> DRGBSync;
+  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::CameraInfo> DISync;
+  boost::shared_ptr<message_filters::Synchronizer<DRGBSync> > m_texture_sync;
+  boost::shared_ptr<message_filters::Synchronizer<DISync> > m_depth_only_sync;
 
-  message_filters::Subscriber<Image>* m_rgb_sub;
-  message_filters::Subscriber<Image>* m_depth_sub;
-  message_filters::Subscriber<CameraInfo>* m_info_sub;
+  boost::shared_ptr<message_filters::Subscriber<Image> > m_rgb_sub;
+  boost::shared_ptr<message_filters::Subscriber<Image> > m_depth_sub;
+  boost::shared_ptr<message_filters::Subscriber<CameraInfo> > m_info_sub;
 
   sensor_msgs::ImageConstPtr m_rgb;
   sensor_msgs::ImageConstPtr m_depth;
@@ -421,7 +411,7 @@ struct KinFuLSApp
   {
     PCD_BIN = 1, PCD_ASCII = 2, PLY = 3, MESH_PLY = 7, MESH_VTK = 8
   };
-  KinFuLSApp(float vsz, float shiftDistance, ros::NodeHandle & nodeHandle, uint depth_height, uint depth_width) :
+  KinFuLSApp(float vsz, const int vr, float shiftDistance, ros::NodeHandle & nodeHandle, uint depth_height, uint depth_width) :
       scan_(false), scan_mesh_(false), scan_volume_(false), independent_camera_(false),
       registration_(false), integrate_colors_(false), pcd_source_(false), focal_length_(-1.f),
       m_reset_subscriber(nodeHandle,m_mutex,m_cond),m_image_subscriber(nodeHandle,m_mutex,m_cond),
@@ -432,9 +422,11 @@ struct KinFuLSApp
   {
     //Init Kinfu Tracker
     Eigen::Vector3f volume_size = Eigen::Vector3f::Constant(vsz/*meters*/);
+    Eigen::Vector3i volume_resolution = Eigen::Vector3i::Constant(vr);
 
     ROS_INFO("--- CURRENT SETTINGS ---\n");
     ROS_INFO("Volume size is set to %.2f meters\n", vsz);
+    ROS_INFO("Volume resolution is set to %d voxels\n", vr);
     ROS_INFO("Volume will shift when the camera target point is farther than %.2f meters from the volume center\n", shiftDistance);
     ROS_INFO("The target point is located at [0, 0, %.2f] in camera coordinates\n", 0.6*vsz);
     ROS_INFO("------------------------\n");
@@ -443,7 +435,7 @@ struct KinFuLSApp
     if(shiftDistance > 2.5 * vsz)
       ROS_WARN("WARNING Shifting distance (%.2f) is very large compared to the volume size (%.2f).\nYou can modify it using --shifting_distance.\n", shiftDistance, vsz);
 
-    kinfu_ = new pcl::gpu::kinfuLS::KinfuTracker(volume_size, shiftDistance, depth_height, depth_width);
+    kinfu_ = new pcl::gpu::kinfuLS::KinfuTracker(volume_size, volume_resolution, shiftDistance, depth_height, depth_width);
     Eigen::Matrix3f R = Eigen::Matrix3f::Identity ();   // * AngleAxisf( pcl::deg2rad(-30.f), Vector3f::UnitX());
     Eigen::Vector3f t = volume_size * 0.5f - Eigen::Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
 
@@ -466,6 +458,9 @@ struct KinFuLSApp
     frame_counter_ = 0;
     enable_texture_extraction_ = false;
     snapshot_rate_ = 45;
+
+    m_depth_height = depth_height;
+    m_depth_width = depth_width;
 
     m_request_termination = false;
   }
@@ -588,14 +583,14 @@ struct KinFuLSApp
 
       if (clear_sphere)
       {
-        kinfu_->clearSphere(clear_sphere->center,clear_sphere->radius);
+        kinfu_->clearSphere(clear_sphere->center,clear_sphere->radius,clear_sphere->set_to_empty);
         ROS_INFO("KinFu cleared sphere.");
         m_command_subscriber.ack(clear_sphere->command_id,true);
       }
 
       if (clear_bbox)
       {
-        kinfu_->clearBBox(clear_bbox->min,clear_bbox->max);
+        kinfu_->clearBBox(clear_bbox->min,clear_bbox->max,clear_bbox->set_to_empty);
         ROS_INFO("KinFu cleared bbox.");
         m_command_subscriber.ack(clear_bbox->command_id,true);
       }
@@ -603,9 +598,54 @@ struct KinFuLSApp
       if (hasrequests)
         m_world_download_manager.respond(kinfu_);
 
-      // lock the mutex again, it will be unlocked by the condition variable at the beginning of the cycle
+      // lock the mutex again, it will be unlocked by the condition variable at the beginning of the loop
       main_lock.lock();
     }
+  }
+
+  suint * convertToShortIntArray(const sensor_msgs::ImageConstPtr& depth,size_t & step,std::vector<suint> & data)
+  {
+    const size_t height = depth->height;
+    const size_t width = depth->width;
+    const std::string encoding = depth->encoding;
+    const bool is_float32 = encoding == "32FC1";
+    const bool is_uint16 = encoding == "16UC1";
+    const bool is_bigendian = depth->is_bigendian;
+
+    suint * data_ptr;
+
+    if (!is_float32 && !is_uint16)
+      ROS_ERROR("kinfu: depth encoding not supported: %s", encoding.c_str());
+
+    if (is_uint16 && !is_bigendian)
+    {
+      data_ptr = (suint *)(depth->data.data());
+      step = depth->step;
+    }
+    else
+    {
+      data.assign(height * width,0);
+
+      for (uint y = 0; y < height; y++)
+        for (uint x = 0; x < width; x++)
+        {
+          if (is_float32)
+          {
+            float f;
+            std::memcpy(&f,&(depth->data[depth->step * y + x * 4]),4);
+            data[y * width + x] = suint(f * 1000.0 + 0.5);
+          }
+          if (is_uint16 && is_bigendian)
+          {
+            data[y * width + x] = suint(depth->data[depth->step * y + x * 2]) * suint(256) +
+                                  suint(depth->data[depth->step * y + x * 2 + 1]);
+          }
+        }
+      step = width * 2;
+      data_ptr = data.data();
+    }
+
+    return data_ptr;
   }
 
   //callback function, called with every new depth topic message
@@ -621,7 +661,20 @@ struct KinFuLSApp
         return;
     }
 
-    depth_device_.upload (&(depth->data[0]), depth->step, depth->height, depth->width);
+    if (depth->height != m_depth_height || depth->width != m_depth_width)
+    {
+      ROS_ERROR("kinfu: received %dx%d depth image, but %dx%d is expected (check parameters %s and %s).",
+                int(depth->width),int(depth->height),int(m_depth_width),int(m_depth_height),
+                PARAM_NAME_DEPTH_WIDTH, PARAM_NAME_DEPTH_HEIGHT);
+      return;
+    }
+
+    // convert depth to short uint little-endian format
+    std::vector<suint> depth_storage;
+    size_t depth_step;
+    suint * depth_ptr = convertToShortIntArray(depth,depth_step,depth_storage);
+
+    depth_device_.upload (depth_ptr, depth_step, depth->height, depth->width);
      // if (integrate_colors_)
      //    image_view_.colors_device_.upload (rgb24.data, rgb24.step, rgb24.rows, rgb24.cols);
 
@@ -706,6 +759,11 @@ struct KinFuLSApp
       kinfu_->setWeightCubeListener(m_world_download_manager.getWeightCubeListener());
   }
 
+  void setTSDFPadding(const int padding)
+  {
+    kinfu_->setTSDFPadding(padding);
+  }
+
   void enableExtractBorderPoints()
   {
     TIncompletePointsListener::Ptr listener = m_world_download_manager.getIncompletePointsListener();
@@ -722,6 +780,14 @@ struct KinFuLSApp
     ROS_INFO("kinfu: frontier points extraction enabled.");
   }
 
+  void enableExtractSurfacePoints()
+  {
+    TIncompletePointsListener::Ptr listener = m_world_download_manager.getIncompletePointsListener();
+    listener->AddAcceptedType(TIncompletePointsListener::TYPE_SURFACES);
+    kinfu_->setIncompletePointsListener(listener);
+    ROS_INFO("kinfu: surface points extraction enabled.");
+  }
+
   void setMarchingCubesVolumeSize(int size)
   {
     m_world_download_manager.setMarchingCubesVolumeSize(size);
@@ -731,6 +797,9 @@ struct KinFuLSApp
   {
     snapshot_rate_ = frame_count;
   }
+
+  void SetDepthWidth(const uint w) { m_depth_width = w; }
+  void SetDepthHeight(const uint h) { m_depth_height = h; }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -766,6 +835,8 @@ struct KinFuLSApp
 
   boost::thread m_thread;
   bool m_request_termination;
+
+  uint m_depth_width,m_depth_height;
 
   std::vector<pcl::gpu::kinfuLS::PixelRGB> source_image_data_;
   std::vector<unsigned short> source_depth_data_;
@@ -816,6 +887,8 @@ int main(int argc, char* argv[])
   ros::init(argc, argv, "kinfuLS");
   ros::NodeHandle nh("~");
 
+  bool param_bool;
+
   // assign value from parameter server, with default.
   int device;
   nh.param<int>(PARAM_NAME_CUDA_DEVICE_ID, device, PARAM_DEFAULT_CUDA_DEVICE_ID);
@@ -826,6 +899,9 @@ int main(int argc, char* argv[])
   nh.getParam(PARAM_NAME_VOLUME_SIZE, volume_size);
   nh.getParam(PARAM_SNAME_VOLUME_SIZE, volume_size);
 
+  int volume_resolution = PARAM_DEFAULT_VOLUME_RESOLUTION;
+  nh.getParam(PARAM_NAME_VOLUME_RESOLUTION, volume_resolution);
+
   double shift_distance = PARAM_DEFAULT_SHIFT_DISTANCE; //pcl::device::DISTANCE_THRESHOLD;
   nh.getParam(PARAM_NAME_SHIFT_DISTANCE, shift_distance);
   nh.getParam(PARAM_SNAME_SHIFT_DISTANCE, shift_distance);
@@ -834,7 +910,7 @@ int main(int argc, char* argv[])
   nh.getParam(PARAM_NAME_DEPTH_HEIGHT,depth_height);
   nh.getParam(PARAM_NAME_DEPTH_WIDTH,depth_width);
 
-  KinFuLSApp app(volume_size, shift_distance, nh, depth_height, depth_width);
+  KinFuLSApp app(volume_size, volume_resolution, shift_distance, nh, depth_height, depth_width);
 
   int snapshot_rate = PARAM_DEFAULT_SNAPSHOT_RATE;
   nh.getParam(PARAM_NAME_SNAPSHOT_RATE, snapshot_rate);
@@ -858,7 +934,17 @@ int main(int argc, char* argv[])
   bool extract_frontier_points = PARAM_DEFAULT_EXTRACT_FRONTIER_POINTS;
   nh.getParam(PARAM_NAME_EXTRACT_FRONTIER_POINTS,extract_frontier_points);
   if (extract_frontier_points)
+  {
     app.enableExtractFrontierPoints();
+    app.setTSDFPadding(1);
+  }
+
+  nh.param<bool>(PARAM_NAME_EXTRACT_SURFACE_POINTS,param_bool,PARAM_DEFAULT_EXTRACT_SURFACE_POINTS);
+  if (param_bool)
+  {
+    app.enableExtractSurfacePoints();
+    app.setTSDFPadding(1);
+  }
 
   int marching_cubes_volume_size = PARAM_DEFAULT_MARCHING_CUBE_SIZE;
   nh.getParam(PARAM_NAME_MARCHING_CUBE_SIZE,marching_cubes_volume_size);

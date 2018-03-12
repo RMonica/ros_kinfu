@@ -71,6 +71,9 @@
 #define PARAM_SNAME_VOLUME_SIZE           "vs"
 #define PARAM_DEFAULT_VOLUME_SIZE         (double(3.0))
 
+#define PARAM_NAME_VOLUME_RESOLUTION      "volume_resolution"
+#define PARAM_DEFAULT_VOLUME_RESOLUTION   (int(512))
+
 #define PARAM_NAME_SHIFT_DISTANCE         "shift_distance"
 #define PARAM_SNAME_SHIFT_DISTANCE        "sd"
 #define PARAM_DEFAULT_SHIFT_DISTANCE      (double(1.5))
@@ -108,6 +111,9 @@
 
 #define PARAM_NAME_EXTRACT_FRONTIER_POINTS    "extract_incomplete_frontier_points"
 #define PARAM_DEFAULT_EXTRACT_FRONTIER_POINTS (bool(false))
+
+#define PARAM_NAME_EXTRACT_SURFACE_POINTS    "extract_surface_points"
+#define PARAM_DEFAULT_EXTRACT_SURFACE_POINTS (bool(false))
 
 #define PARAM_NAME_ENABLE_MIN_MOTION      "enable_minimum_motion"
 #define PARAM_DEFAULT_ENABLE_MIN_MOTION   (bool(true))

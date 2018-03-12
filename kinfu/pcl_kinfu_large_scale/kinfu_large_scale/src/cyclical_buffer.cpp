@@ -43,10 +43,14 @@
 
 
 bool
-pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume, const Eigen::Affine3f &cam_pose, const double distance_camera_target, const bool perform_shift, const bool last_shift, const bool force_shift)
+pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume,
+                                                  const Eigen::Affine3f &cam_pose,
+                                                  const double distance_camera_target,
+                                                  const double distance_threshold,
+                                                  const bool perform_shift,
+                                                  const bool last_shift,
+                                                  const bool force_shift)
 {
-  bool result = false;
-
   // project the target point in the cube
   pcl::PointXYZ targetPoint;
   targetPoint.x = 0.0f;
@@ -62,17 +66,23 @@ pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume, 
 
   checkOldCubeRetrieval(volume);
 
-  if (pcl::euclideanDistance (targetPoint, center_cube) > distance_threshold_)
-    result = true;
+  const bool distance_shift = pcl::euclideanDistance (targetPoint, center_cube) > distance_threshold;
 
   if (!perform_shift && !force_shift)
-    return (result);
+    return (distance_shift);
+
+  if (distance_shift && !old_cube_retrieved_ && !force_shift)
+    return false;
+    // delaying shift while previous weight cube is uploaded.
+
+  if (force_shift && !old_cube_retrieved_)
+    PCL_WARN("checkForShift: forced shifting, but previous weight cube was not uploaded!");
 
   // perform shifting operations
-  if (result || force_shift)
+  if (distance_shift || force_shift)
     performShift (volume, targetPoint, last_shift);
 
-  return (result);
+  return (distance_shift);
 }
 
 void pcl::gpu::kinfuLS::CyclicalBuffer::checkOldCubeRetrieval(const TsdfVolume::Ptr volume)
@@ -176,15 +186,16 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
   {
     // clear the old cube position
     const Eigen::Vector3f origin(buffer_.origin_GRID_global.x, buffer_.origin_GRID_global.y, buffer_.origin_GRID_global.z);
-    const Eigen::Vector3f voxels_size(buffer_.voxels_size.x - 1, buffer_.voxels_size.y - 1, buffer_.voxels_size.z - 1);
-    const Eigen::Vector3f origin_max = origin + voxels_size;
-    incomplete_points_listener_->onClearBBox(origin, origin_max, IncompletePointsListener::TYPE_ANY);
+    const Eigen::Vector3f voxels_size(buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z);
+    const Eigen::Vector3f origin_max = origin + voxels_size - Eigen::Vector3f::Ones();
+    const Eigen::Vector3f origin_min = origin + Eigen::Vector3f::Ones();
+    incomplete_points_listener_->onClearBBox(origin_min, origin_max, IncompletePointsListener::TYPE_ANY);
 
     if (incomplete_points_listener_->acceptsType(IncompletePointsListener::TYPE_BORDERS))
     {
       PointCloudXYZNormal::Ptr old_cloud = volume->fetchIncompletePointsAsPointCloud(
         cloud_buffer_device_xyz_, cloud_buffer_device_normals_,
-        true, last_data_transfer_matrix_device_, &buffer_);
+        1, last_data_transfer_matrix_device_, &buffer_);
       transformPointCloud (*old_cloud, *old_cloud, global_cloud_transformation);
       incomplete_points_listener_->onAddSlice(old_cloud, IncompletePointsListener::TYPE_BORDERS);
     }
@@ -193,9 +204,18 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
     {
       PointCloudXYZNormal::Ptr old_cloud = volume->fetchIncompletePointsAsPointCloud(
         cloud_buffer_device_xyz_, cloud_buffer_device_normals_,
-        false, last_data_transfer_matrix_device_, &buffer_);
+        0, last_data_transfer_matrix_device_, &buffer_);
       transformPointCloud (*old_cloud, *old_cloud, global_cloud_transformation);
       incomplete_points_listener_->onAddSlice(old_cloud, IncompletePointsListener::TYPE_FRONTIERS);
+    }
+
+    if (incomplete_points_listener_->acceptsType(IncompletePointsListener::TYPE_SURFACES))
+    {
+      PointCloudXYZNormal::Ptr old_cloud = volume->fetchIncompletePointsAsPointCloud(
+        cloud_buffer_device_xyz_, cloud_buffer_device_normals_,
+        2, last_data_transfer_matrix_device_, &buffer_);
+      transformPointCloud (*old_cloud, *old_cloud, global_cloud_transformation);
+      incomplete_points_listener_->onAddSlice(old_cloud, IncompletePointsListener::TYPE_SURFACES);
     }
   }
 
@@ -204,7 +224,7 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
 
   world_model_.getExistingData (buffer_.origin_GRID_global.x, buffer_.origin_GRID_global.y, buffer_.origin_GRID_global.z,
                                 offset_x, offset_y, offset_z,
-                                buffer_.voxels_size.x - 1, buffer_.voxels_size.y - 1, buffer_.voxels_size.z - 1,
+                                buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z,
                                 *previously_existing_slice);
 
   //replace world model data with values extracted from the TSDF buffer slice
@@ -247,6 +267,42 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
       PCL_INFO("shift: done.\n");
       }
   }
+}
+
+void
+pcl::gpu::kinfuLS::CyclicalBuffer::clearSphere(const Eigen::Vector3f & center,float radius,bool set_to_empty)
+{
+  world_model_.clearSphere(center,radius);
+
+  PointCloudXYZNormal::Ptr cleared_frontiers_cloud;
+  if (incomplete_points_listener_ &&
+      incomplete_points_listener_->acceptsType(IncompletePointsListener::TYPE_CLEARED_FRONTIERS))
+    cleared_frontiers_cloud.reset(new PointCloudXYZNormal);
+
+  if (weight_cube_listener_)
+    weight_cube_listener_->onClearSphere(center,radius,set_to_empty,cleared_frontiers_cloud);
+  if (incomplete_points_listener_)
+    incomplete_points_listener_->onClearSphere(center, radius, IncompletePointsListener::TYPE_ANY);
+  if (incomplete_points_listener_ && cleared_frontiers_cloud)
+    incomplete_points_listener_->onAddSlice(cleared_frontiers_cloud,IncompletePointsListener::TYPE_CLEARED_FRONTIERS);
+}
+
+void
+pcl::gpu::kinfuLS::CyclicalBuffer::clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty)
+{
+  world_model_.clearBBox(min,max);
+
+  PointCloudXYZNormal::Ptr cleared_frontier_cloud;
+  if (incomplete_points_listener_ &&
+      incomplete_points_listener_->acceptsType(IncompletePointsListener::TYPE_CLEARED_FRONTIERS))
+    cleared_frontier_cloud.reset(new PointCloudXYZNormal);
+
+  if (weight_cube_listener_)
+    weight_cube_listener_->onClearBBox(min,max, set_to_empty, cleared_frontier_cloud);
+  if (incomplete_points_listener_)
+    incomplete_points_listener_->onClearBBox(min, max, IncompletePointsListener::TYPE_ANY);
+  if (incomplete_points_listener_ && cleared_frontier_cloud)
+    incomplete_points_listener_->onAddSlice(cleared_frontier_cloud, IncompletePointsListener::TYPE_CLEARED_FRONTIERS);
 }
 
 void

@@ -16,7 +16,11 @@ Some features were added. These include:
 - Request for synthetic depth maps, projected from arbitrary locations
 - Detection of unknown borders and frontiers
 
-In this repository, you can find four ROS packages, explained in the following sections.
+The PCL KinFu Large Scale source code was integrated into the repository.
+As of 2018-03-12, the integrated source code diverged significantly from original KinFu, due to many off-by-one errors which were discovered in the rolling buffer code.
+The code is not backward compatible with original KinFu.
+
+In this repository, there are four ROS packages, explained in the following sections.
 
 -- KINFU_MSGS --
 
@@ -69,6 +73,7 @@ As of 2016, the source of KinFu is included in the package, and separation betwe
 
 -- PUBLICATIONS --
 
+R. Monica, J. Aleotti, Contour-based next-best view planning from point cloud segmentation of unknown objects, Autonomous Robots, Volume 42, Issue 2, February 2018, Pages 443-458
 Riccardo Monica, Jacopo Aleotti, Stefano Caselli, A KinFu based approach for robot spatial attention and view planning, Robotics and Autonomous Systems, Volume 75, Part B, 2016
 
 2016-11-08

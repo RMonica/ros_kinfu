@@ -14,12 +14,14 @@ uint32 COMMAND_TYPE_SET_ENABLED_MIN_MOVEMENT = 4
 uint32 COMMAND_TYPE_SET_FORCED_TF_FRAMES = 5
 
 # float_data must contain 4 values: [x,y,z,r], where [x,y,z] is the center and r is the radius
+# the cleared volume is set to unknown by default.
+# If boolean_data contains a single boolean set to true, the cleared volume is set to empty instead.
 uint32 COMMAND_TYPE_CLEAR_SPHERE = 6
 # float_data must contain 6 values: [mx,my,mz,Mx,My,Mz], where m[x,y,z] is the minimum and M[x,y,z] is the maximum
 # WARNING: bounding box is aligned with the internal TSDF representation!
 uint32 COMMAND_TYPE_CLEAR_BOUNDING_BOX = 7
 
-# if the kinfu is suspended, this will execute it for a single frame
+# if kinfu is suspended, this executes it for a single frame
 uint32 COMMAND_TYPE_TRIGGER = 8
 
 # if (now > hint_expiration_time), the hint is ignored

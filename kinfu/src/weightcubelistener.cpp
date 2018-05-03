@@ -232,7 +232,7 @@ void TWeightCubeListener::onClearBBox(const Eigen::Vector3f & m,const Eigen::Vec
         for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
           for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
             {
-            if ((t.array() != min.array()).any() && (t.array() != max.array()).any())
+            if ((t.array() != min.array()).all() && (t.array() != max.array()).all())
               continue;
 
             if (m_octree.GetIntCached(t.x(),t.y(),t.z(),octree_cache) == set_to_known)

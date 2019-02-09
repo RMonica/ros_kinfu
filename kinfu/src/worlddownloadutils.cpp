@@ -584,6 +584,13 @@ template <class PointT>
   TriangleVectorConstPtr triangles, typename pcl::PointCloud<PointT>::Ptr out_cloud, TriangleVectorPtr out_triangles)
 {
   const uint64 input_size = cloud->size();
+  if (!input_size)
+  {
+    *out_cloud = *cloud;
+    *out_triangles = *triangles;
+    return;
+  }
+
   std::vector<uint64> ordered(input_size);
   for (uint64 i = 0; i < input_size; i++)
     ordered[i] = i;

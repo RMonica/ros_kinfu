@@ -1,0 +1,17 @@
+<launch>
+  <include file="$(find realsense2_camera)/launch/rs_rgbd.launch" />
+  
+  <node pkg="kinfu" type="kinfu" name="realsense_kinfu" output="screen">
+    <param name="prefix_topic" value="/camera" />
+    <param name="camera_info_topic" value="/camera/aligned_depth_to_color/camera_info" />
+    <param name="depth_image_topic" value="/camera/aligned_depth_to_color/image_raw" />
+    <param name="autostart" value="true" />
+    <param name="response_topic" value="/kinfu_response_topic" />
+    <param name="request_topic" value="/kinfu_request_topic" />
+    <param name="extract_known_points" value="false" />
+
+    <param name="depth_height" type="int" value="480" />
+    <param name="depth_width" type="int" value="640" />
+  </node>
+
+</launch>

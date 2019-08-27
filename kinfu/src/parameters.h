@@ -71,6 +71,9 @@
 #define PARAM_SNAME_VOLUME_SIZE           "vs"
 #define PARAM_DEFAULT_VOLUME_SIZE         (double(3.0))
 
+#define PARAM_NAME_TARGET_POINT_DISTANCE  "target_point_distance"
+// default: volume_size / 3
+
 #define PARAM_NAME_VOLUME_RESOLUTION      "volume_resolution"
 #define PARAM_DEFAULT_VOLUME_RESOLUTION   (int(512))
 

@@ -76,6 +76,9 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
                      const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
   void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
                    const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
+  void onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+                       float radius, float half_height,
+                       const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
 
   void onReset();
 

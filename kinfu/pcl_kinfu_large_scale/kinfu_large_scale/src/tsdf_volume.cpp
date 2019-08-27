@@ -191,6 +191,31 @@ pcl::gpu::kinfuLS::TsdfVolume::clearBBox(const Eigen::Vector3i & origin,const Ei
   pcl::device::kinfuLS::clearBBox(volume_,r,o,m,M,set_to_empty);
 }
 
+void
+pcl::gpu::kinfuLS::TsdfVolume::clearCylinder(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,
+                                             const Eigen::Vector3f & height_bearing,
+                                             float radius,float half_height,bool set_to_empty)
+{
+  int3 o;
+  o.x = origin.x();
+  o.y = origin.y();
+  o.z = origin.z();
+  float3 c;
+  c.x = center.x();
+  c.y = center.y();
+  c.z = center.z();
+  float3 hb;
+  hb.x = height_bearing.x();
+  hb.y = height_bearing.y();
+  hb.z = height_bearing.z();
+  int3 r;
+  r.x = resolution_.x();
+  r.y = resolution_.y();
+  r.z = resolution_.z();
+
+  pcl::device::kinfuLS::clearCylinder(volume_,r,o,c,hb,radius,half_height,set_to_empty);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void

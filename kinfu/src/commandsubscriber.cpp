@@ -162,6 +162,34 @@ void CommandSubscriber::commandCallback(const kinfu_msgs::KinfuCommand & cmd)
       m_clear_bbox = BBox::Ptr(new BBox(kinfu_min,kinfu_max,cmd.command_id,set_to_empty));
       }
     }
+  else if (cmd.command_type == cmd.COMMAND_TYPE_CLEAR_CYLINDER)
+    {
+    ROS_INFO("kinfu: command: clear cylinder.");
+    if (cmd.float_data.size() < 7)
+      ROS_ERROR("kinfu: command: clear cylinder requires 7 float_data params.");
+    else
+      {
+      Eigen::Vector3f b_min,b_max;
+      float r;
+      for (uint i = 0; i < 3; i++)
+        b_min[i] = cmd.float_data[i];
+      for (uint i = 0; i < 3; i++)
+        b_max[i] = cmd.float_data[i + 3];
+      r = cmd.float_data[6];;
+
+      b_min = m_initial_transformation * b_min;
+      b_max = m_initial_transformation * b_max;
+
+      if ((b_min - b_max).squaredNorm() < 1e-7f)
+        ROS_WARN("kinfu: cylinder height is very small, division by zero may occur later.");
+
+      bool set_to_empty = false;
+      if (cmd.boolean_data.size() >= 1 && cmd.boolean_data[0])
+        set_to_empty = true;
+
+      m_clear_cylinder = Cylinder::Ptr(new Cylinder(b_min,b_max,r,cmd.command_id,set_to_empty));
+      }
+    }
   else if (cmd.command_type == cmd.COMMAND_TYPE_TRIGGER)
     {
     if (m_is_running || m_is_triggered)
@@ -208,15 +236,16 @@ bool CommandSubscriber::hasForcedHint() const
   return m_hint_forced || m_forced_tf_frames;
   }
 
-Eigen::Affine3f CommandSubscriber::getHintTransform() const
+Eigen::Affine3f CommandSubscriber::getHintTransform(bool & ok) const
   {
   if (m_forced_tf_frames)
     {
     Eigen::Affine3f result = Eigen::Affine3f::Identity();
-    getForcedTfFrame(result);
+    ok = getForcedTfFrame(result);
     return m_initial_transformation * result;
     }
 
+  ok = true;
   return m_hint;
   }
 

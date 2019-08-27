@@ -65,6 +65,8 @@ class TIncompletePointsListener: public pcl::gpu::kinfuLS::CyclicalBuffer::Incom
 
   void onClearBBox(const Eigen::Vector3f & bbox_min, const Eigen::Vector3f & bbox_max, const ListenerType type);
   void onClearSphere(const Eigen::Vector3f & center, const float radius, const ListenerType type);
+  void onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+                       float radius, float half_height, const ListenerType type);
 
   void AddAcceptedType(const ListenerType type);
 
@@ -77,6 +79,9 @@ class TIncompletePointsListener: public pcl::gpu::kinfuLS::CyclicalBuffer::Incom
     const Eigen::Vector3f & center, const float radius);
   PointXYZNormalCloud::Ptr ClearBBoxCloud(const PointXYZNormalCloud::ConstPtr cloud,
     const Eigen::Vector3f & bbox_min, const Eigen::Vector3f & bbox_max);
+  PointXYZNormalCloud::Ptr ClearCylinderCloud(const PointXYZNormalCloud::ConstPtr cloud,
+    const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+    float radius, float half_height);
 
   std::set<ListenerType> m_accepted_types;
   PointXYZNormalCloud::Ptr m_border_cloud;

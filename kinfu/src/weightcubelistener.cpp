@@ -275,6 +275,112 @@ void TWeightCubeListener::onClearBBox(const Eigen::Vector3f & m,const Eigen::Vec
     }
   }
 
+void TWeightCubeListener::onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+                                          float radius, float half_height,
+                                          const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier)
+{
+  // scope only
+    {
+    boost::mutex::scoped_lock lock(m_cube_mutex);
+    if (m_is_terminating)
+      return;
+    // wait for an empty queue
+    while ((!m_cube_queue.empty()) || (m_currently_working_cubes > 0))
+      {
+      m_cube_cond.wait(lock);
+      if (m_is_terminating)
+        return;
+      }
+
+    // approximate bounding box
+    Eigen::Vector3i min = (center - Eigen::Vector3f::Ones() * (half_height + radius + 1.0)).cast<int>();
+    Eigen::Vector3i max = (center + Eigen::Vector3f::Ones() * (half_height + radius + 1.0)).cast<int>();
+
+    if (cleared_frontier)
+      {
+      ROS_INFO("kinfu: onClearCylinder: building frontier...");
+      Eigen::Vector3i t;
+      OccupancyOctree::Cache octree_cache;
+      for (t.x() = min.x(); t.x() <= max.x(); t.x()++)
+        for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
+          for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
+          {
+            const Eigen::Vector3f float_t = t.cast<float>();
+            const Eigen::Vector3f projected_pt = center - height_bearing * height_bearing.dot(center - float_t);
+            if (!((center - projected_pt).norm() < half_height &&
+                (projected_pt - float_t).norm() < radius))
+              continue;
+
+            if (m_octree.GetIntCached(t.x(),t.y(),t.z(),octree_cache) == set_to_known)
+              continue;
+
+            for (uint ax = 0; ax < 3; ax++)
+              for (int dx = -1; dx <= 1; dx++)
+                {
+                if (!dx)
+                  continue;
+                const Eigen::Vector3i dt = Eigen::Vector3i::Unit(ax) * dx;
+                const Eigen::Vector3i nt = t + dt;
+                const Eigen::Vector3f nt_float = nt.cast<float>();
+                bool create_t = false;
+                bool nt_in_cylinder;
+                Eigen::Vector3f normal = Eigen::Vector3f::Zero();
+                {
+                  const Eigen::Vector3f projected_nt = center - height_bearing * height_bearing.dot(center - nt_float);
+                  bool nt_in_cylinder_base = (center - projected_nt).norm() < half_height;
+                  bool nt_in_cylinder_lateral = (projected_pt - nt_float).norm() < radius;
+                  nt_in_cylinder = nt_in_cylinder_base && nt_in_cylinder_lateral;
+
+                  if (!nt_in_cylinder_base)
+                    normal = height_bearing * ((height_bearing.dot(float_t - center) > 0.0f) ? 1.0f : -1.0f);
+                  else if (!nt_in_cylinder_lateral)
+                    normal = (nt_float - projected_nt).normalized();
+                }
+
+                bool nt_already_set = m_octree.GetIntCached(nt.x(),nt.y(),nt.z(),octree_cache) == set_to_known;
+
+                if (!nt_in_cylinder && !nt_already_set)
+                  {
+                  if (set_to_known)
+                    create_t = true;
+                  else
+                    {
+                    pcl::PointNormal pt;
+                    pt.x = nt.x(); pt.y = nt.y(); pt.z = nt.z();
+                    pt.normal_x = normal.x(); pt.normal_y = normal.y(); pt.normal_z = normal.z();
+                    cleared_frontier->push_back(pt);
+                    }
+                  }
+
+                if (create_t)
+                  {
+                  pcl::PointNormal pt;
+                  pt.x = t.x(); pt.y = t.y(); pt.z = t.z();
+                  normal = -normal;
+                  pt.normal_x = normal.x(); pt.normal_y = normal.y(); pt.normal_z = normal.z();
+                  cleared_frontier->push_back(pt);
+                  }
+                }
+          }
+      ROS_INFO("kinfu: onClearCylinder: frontier built.");
+      }
+
+    // clear the cylinder in its bounding box only
+    Eigen::Vector3i t;
+    for (t.x() = min.x(); t.x() <= max.x(); t.x()++)
+      for (t.y() = min.y(); t.y() <= max.y(); t.y()++)
+        for (t.z() = min.z(); t.z() <= max.z(); t.z()++)
+        {
+          const Eigen::Vector3f projected_pt = center - height_bearing * height_bearing.dot(center - t.cast<float>());
+          if ((center - projected_pt).norm() < half_height &&
+              (projected_pt - t.cast<float>()).norm() < radius)
+            m_octree.SetInt(t.x(),t.y(),t.z(),set_to_known);
+        }
+
+    m_cube_cond.notify_all();
+    }
+}
+
 void TWeightCubeListener::onReset()
   {
   // scope only

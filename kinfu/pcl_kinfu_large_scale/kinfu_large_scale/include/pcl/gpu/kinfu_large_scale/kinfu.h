@@ -141,6 +141,12 @@ namespace pcl
           void
           setTSDFPadding(const int padding);
 
+          /** \brief sets distance of target point from camera
+           * \param[in] distance the distance
+           */
+          void
+          setDistanceCameraTarget(const float distance);
+
           /** \brief Performs initialization for color integration. Must be called before calling color integration. 
             * \param[in] max_weight max weighe for color integration. -1 means default weight.
             */
@@ -158,6 +164,9 @@ namespace pcl
           void clearSphere(const Eigen::Vector3f & center,float radius,bool set_to_empty);
 
           void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
+
+          void clearCylinder(const Eigen::Vector3f & b_min,const Eigen::Vector3f & b_max,
+                             const float radius,const bool set_to_empty);
 
           struct THint
           {
@@ -187,6 +196,8 @@ namespace pcl
             * \return true if can render 3D view.
             */
           bool operator() (const DepthMap& depth,const THint & hint = THint());
+
+          void IntegrateEmptyMap(const DepthMap& depth);
 
           /** \brief Processes next frame (both depth and color integration). Please call initColorIntegration before invpoking this.
             * \param[in] depth next depth frame with values in millimeters
@@ -519,6 +530,9 @@ namespace pcl
           
           /** \brief Buffer for storing scaled depth image */
           DeviceArray2D<float> depthRawScaled_;
+
+          /** \brief Buffer for storing scaled depth image when an empty voxel was "seen" somehow */
+          DeviceArray2D<float> depthEmptyRawScaled_;
           
           /** \brief Temporary buffer for ICP */
           DeviceArray2D<double> gbuf_;
@@ -541,8 +555,11 @@ namespace pcl
           /** \brief When set to true, KinFu notifies that it is finished scanning and can be stopped. */
           bool finished_;
 
-          /** \brief // when the camera target point is farther than DISTANCE_THRESHOLD from the current cube's center, shifting occurs. In meters . */
+          /** \brief when the camera target point is farther than DISTANCE_THRESHOLD from the current cube's center, shifting occurs. In meters . */
           float shifting_distance_;
+
+          /** \brief distance of target point from camera */
+          float target_point_distance_;
 
           /** \brief Size of the TSDF volume in meters. */
           float volume_size_;

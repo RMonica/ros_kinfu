@@ -91,6 +91,23 @@ class CommandSubscriber
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
   };
 
+  struct Cylinder
+  {
+    typedef boost::shared_ptr<Cylinder> Ptr;
+    Eigen::Vector3f b_min;
+    Eigen::Vector3f b_max;
+    float radius;
+    bool set_to_empty;
+
+    std::string command_id;
+
+    Cylinder(const Eigen::Vector3f & bm,const Eigen::Vector3f & bM,const float r,const std::string &id,const bool ste):
+      b_min(bm),b_max(bM),radius(r),set_to_empty(ste),command_id(id) {}
+    Cylinder(): b_min(Eigen::Vector3f::Zero()),b_max(Eigen::Vector3f::Ones()),radius(0.0f),set_to_empty(false) {}
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+  };
+
   CommandSubscriber(ros::NodeHandle & nh,tf::TransformListener & tf_listener,
     boost::mutex & shared_mutex,boost::condition_variable & cond);
 
@@ -98,7 +115,7 @@ class CommandSubscriber
 
   bool hasHint() const;
   bool hasForcedHint() const;
-  Eigen::Affine3f getHintTransform() const;
+  Eigen::Affine3f getHintTransform(bool & ok) const;
   void clearHint();
 
   bool isResetRequired() const;
@@ -125,6 +142,10 @@ class CommandSubscriber
   bool hasClearBBox() {return bool(getClearBBox()); }
   BBox::Ptr getClearBBox() {return m_clear_bbox; }
   void clearClearBBox() {m_clear_bbox = BBox::Ptr(); }
+
+  bool hasClearCylinder() {return bool(getClearCylinder()); }
+  Cylinder::Ptr getClearCylinder() {return m_clear_cylinder; }
+  void clearClearCylinder() {m_clear_cylinder = Cylinder::Ptr(); }
 
   // WARNING: this must be thread safe!
   void ack(const std::string & id,bool success) const;
@@ -156,6 +177,7 @@ class CommandSubscriber
 
   Sphere::Ptr m_clear_sphere;
   BBox::Ptr m_clear_bbox;
+  Cylinder::Ptr m_clear_cylinder;
 
   Eigen::Affine3f m_hint;
   ros::Time m_hint_expiration;

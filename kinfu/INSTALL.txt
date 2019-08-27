@@ -18,7 +18,7 @@ This node now compiles like a common ROS node, except that:
   Unfortunately, the GPU RAM usage during marching cubes increases significantly.
   The command "nvidia-smi" may help you monitor your GPU memory usage.
   Workarounds:
-  - Decrease the VOLUME_X, VOLUME_Y and VOLUME_Z parameters in device.h (at the expense of global resolution).
-  - Set the ROS parameter "marching_cubes_volume_size" to less than VOLUME_X (at the expense of marching cubes speed).
+  - Decrease the "volume_resolution parameter" (at the expense of resolution).
+  - Set the ROS parameter "marching_cubes_volume_size" to less "than volume_resolution" (at the expense of marching cubes speed).
 
-2017 07 21
+2019 08 27

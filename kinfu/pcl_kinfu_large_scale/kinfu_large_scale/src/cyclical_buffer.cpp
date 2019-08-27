@@ -288,6 +288,27 @@ pcl::gpu::kinfuLS::CyclicalBuffer::clearSphere(const Eigen::Vector3f & center,fl
 }
 
 void
+pcl::gpu::kinfuLS::CyclicalBuffer::clearCylinder(const Eigen::Vector3f & center,const Eigen::Vector3f & height_bearing,
+                                                 float radius,float half_height,bool set_to_empty)
+{
+  world_model_.clearCylinder(center,height_bearing,radius,half_height);
+
+  PointCloudXYZNormal::Ptr cleared_frontiers_cloud;
+  if (incomplete_points_listener_ &&
+      incomplete_points_listener_->acceptsType(IncompletePointsListener::TYPE_CLEARED_FRONTIERS))
+    cleared_frontiers_cloud.reset(new PointCloudXYZNormal);
+
+  if (weight_cube_listener_)
+    weight_cube_listener_->onClearCylinder(center, height_bearing, radius, half_height,
+                                           set_to_empty, cleared_frontiers_cloud);
+  if (incomplete_points_listener_)
+    incomplete_points_listener_->onClearCylinder(center, height_bearing, radius,
+                                                 half_height, IncompletePointsListener::TYPE_ANY);
+  if (incomplete_points_listener_ && cleared_frontiers_cloud)
+    incomplete_points_listener_->onAddSlice(cleared_frontiers_cloud,IncompletePointsListener::TYPE_CLEARED_FRONTIERS);
+}
+
+void
 pcl::gpu::kinfuLS::CyclicalBuffer::clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty)
 {
   world_model_.clearBBox(min,max);

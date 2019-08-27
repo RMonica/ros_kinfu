@@ -84,6 +84,9 @@ namespace pcl
                                        const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) = 0;
             virtual void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
                                      const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) = 0;
+            virtual void onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+                                         float radius, float half_height,
+                                         const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) = 0;
 
             virtual void onReset() = 0;
 
@@ -120,6 +123,8 @@ namespace pcl
 
             virtual void onClearBBox(const Eigen::Vector3f & bbox_min, const Eigen::Vector3f & bbox_max, const Type type) = 0;
             virtual void onClearSphere(const Eigen::Vector3f & center, const float radius, const Type type) = 0;
+            virtual void onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+                                         float radius, float half_height, const Type type) = 0;
 
             virtual bool acceptsType(const Type type) const = 0;
           };
@@ -312,6 +317,9 @@ namespace pcl
           }
 
           void clearSphere(const Eigen::Vector3f & center,float radius,bool set_to_empty);
+
+          void clearCylinder(const Eigen::Vector3f & center,const Eigen::Vector3f & height_bearing,
+                             float radius,float half_height,bool set_to_empty);
 
           void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
 

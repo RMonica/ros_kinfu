@@ -452,6 +452,7 @@ void WorldDownloadManager::initRaycaster(bool has_intrinsics,const kinfu_msgs::K
   m_raycaster->setWithKnown(false);
   m_raycaster->setWithVertexMap(true);
   m_raycaster->setWithVoxelIds(false);
+  m_raycaster->setSkipUnknownOutsideFilter(false);
 
   if (has_bounding_box_view)
     {
@@ -467,6 +468,44 @@ void WorldDownloadManager::initRaycaster(bool has_intrinsics,const kinfu_msgs::K
     }
   else
     m_raycaster->clearBoundingBox();
+}
+
+std::vector<float> WorldDownloadManager::emitterShadowRemoval(const float fx, const float fy, const float cx, const float cy,
+                                                              const uint rows, const uint cols, const float emitter_distance,
+                                                              const std::vector<float> & intensity_in)
+{
+  std::vector<float> intensity_host = intensity_in;
+  int xstart = cols - 1;
+  int xend = 0;
+  int xinc = -1;
+
+  if (emitter_distance < 0.0f)
+  {
+    xstart = 0;
+    xend = cols - 1;
+    xinc = 1;
+  }
+
+  for (uint yi = 0; yi < rows; yi++)
+  {
+    float max_angle = NAN;
+    for (int xi = xstart; xi >= xend; xi += xinc)
+    {
+      const uint h = xi + yi * cols;
+      if (std::isnan(intensity_host[h]) || intensity_host[h] == 0.0)
+        continue;
+
+      const float intensity = intensity_host[h];
+      const float z = std::abs(intensity);
+      const float x = ((xi - cx) * z / fx);
+      const float ratio = (x - emitter_distance) / z;
+      if (!std::isnan(max_angle) && ratio > max_angle)
+        intensity_host[h] = 0.0f;
+      if (intensity > 0.0f && (std::isnan(max_angle) || ratio < max_angle))
+        max_angle = ratio;
+    }
+  }
+  return intensity_host;
 }
 
 void WorldDownloadManager::cropTsdfCloud(const TsdfCloud & cloud_in,TsdfCloud & cloud_out,

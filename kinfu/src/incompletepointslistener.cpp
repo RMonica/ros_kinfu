@@ -122,8 +122,27 @@ void TIncompletePointsListener::onClearSphere(const Eigen::Vector3f & center, co
     m_surfaces_cloud = ClearSphereCloud(m_surfaces_cloud,center,radius);
   }
 
+void TIncompletePointsListener::onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+                                                float radius, float half_height, const ListenerType type)
+{
+  if (type != IncompletePointsListener::TYPE_ANY)
+    {
+    ROS_WARN("kinfu: incomplete points listener: clear type is not TYPE_ANY, not supported.");
+    return;
+    }
+
+  ROS_INFO("kinfu: incomplete points listener: clearing cylinder.");
+
+  if (m_border_cloud)
+    m_border_cloud = ClearCylinderCloud(m_border_cloud,center,height_bearing,radius,half_height);
+  if (m_frontiers_cloud)
+    m_frontiers_cloud = ClearCylinderCloud(m_frontiers_cloud,center,height_bearing,radius,half_height);
+  if (m_surfaces_cloud)
+    m_surfaces_cloud = ClearCylinderCloud(m_surfaces_cloud,center,height_bearing,radius,half_height);
+}
+
 TIncompletePointsListener::PointXYZNormalCloud::Ptr TIncompletePointsListener::ClearSphereCloud(
-  const PointXYZNormalCloud::ConstPtr cloud, const Eigen::Vector3f & center, const float radius)
+    const PointXYZNormalCloud::ConstPtr cloud, const Eigen::Vector3f & center, const float radius)
   {
   PointXYZNormalCloud::Ptr result(new PointXYZNormalCloud);
   const size_t size = cloud->size();
@@ -134,6 +153,26 @@ TIncompletePointsListener::PointXYZNormalCloud::Ptr TIncompletePointsListener::C
     const pcl::PointNormal & pt = (*cloud)[i];
     const Eigen::Vector3f ept(pt.x,pt.y,pt.z);
     if ((ept - center).squaredNorm() > sq_radius)
+      result->push_back(pt);
+    }
+  return result;
+  }
+
+TIncompletePointsListener::PointXYZNormalCloud::Ptr TIncompletePointsListener::ClearCylinderCloud(
+    const PointXYZNormalCloud::ConstPtr cloud,
+    const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
+    float radius, float half_height)
+  {
+  PointXYZNormalCloud::Ptr result(new PointXYZNormalCloud);
+  const size_t size = cloud->size();
+  result->reserve(size);
+  for (uint i = 0; i < size; i++)
+    {
+    const pcl::PointNormal & pt = (*cloud)[i];
+    const Eigen::Vector3f ept(pt.x,pt.y,pt.z);
+    const Eigen::Vector3f projected_pt = center - height_bearing * height_bearing.dot(center - ept);
+    if ((center - projected_pt).norm() > half_height ||
+        (projected_pt - ept).norm() > radius)
       result->push_back(pt);
     }
   return result;

@@ -227,6 +227,21 @@ namespace pcl
       clearBBox(PtrStep<short2> volume,const int3 voxels_size,const int3& origin,const float3& min,const float3& max,
                 const bool set_to_empty);
 
+      /**
+       * @brief clear a cylinder in a tsdf volume
+       * @param volume the volume
+       * @param voxels_size the volume resolution
+       * @param origin the current volume origin (due to volume shifting)
+       * @param cylinder_center center point of the cylinder (at half height)
+       * @param height_bearing bearing of the cylinder vertical vector
+       * @param radius radius of the base
+       * @param half_height half height of the cylinder
+       * @param set_to_empty set the sphere to empty instead of unknown
+       */
+      void
+      clearCylinder(PtrStep<short2> volume,int3 volume_size,const int3& origin,float3 cylinder_center,float3 height_bearing,
+                    float radius,float half_height,bool set_to_empty);
+
       //first version
       /** \brief Performs Tsfg volume uptation (extra obsolete now)
         * \param[in] depth_raw Kinect depth image
@@ -256,6 +271,11 @@ namespace pcl
       PCL_EXPORTS void 
       integrateTsdfVolume (const PtrStepSz<ushort>& depth, const Intr& intr, const float3& volume_size, 
                           const Mat33& Rcurr_inv, const float3& tcurr, float tranc_dist, PtrStep<short2> volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, DeviceArray2D<float>& depthScaled);
+
+      PCL_EXPORTS void
+      integrateTsdfVolumeOnlyEmpty (const PtrStepSz<ushort>& depth, const Intr& intr, const float3& volume_size,
+                                    const Mat33& Rcurr_inv, const float3& tcurr, float tranc_dist, PtrStep<short2> volume,
+                                    const pcl::gpu::kinfuLS::tsdf_buffer* buffer, DeviceArray2D<float>& depthScaled);
       
       /** \brief Function that clears the TSDF values. The clearing takes place from the origin (in indices) to an offset in X,Y,Z values accordingly
         * \param[in] volume Pointer to TSDF volume in GPU
@@ -338,27 +358,31 @@ namespace pcl
       void
       unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
               const float3& volume_size,
-              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+              const RaycastFilter & filter, const bool skip_unknown_outside_filter,
               MapArr& vmap, MapArr& umap);
 
       void
       unkRaycastNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
               const float3& volume_size,
-              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+              const RaycastFilter & filter, const bool skip_unknown_outside_filter,
               MapArr& vmap, MapArr& umap);
 
 
       void
       unkRaycastBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
               const float3& volume_size,
-              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+              const RaycastFilter & filter, const bool skip_unknown_outside_filter,
               MapArr& vmap, MapArr& umap,
               const float3 & bbox_min,const float3 & bbox_max);
 
       void
       unkRaycastBBoxNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr, float tranc_dist, float min_range,
               const float3& volume_size,
-              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer, const RaycastFilter & filter,
+              const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+              const RaycastFilter & filter, const bool skip_unknown_outside_filter,
               MapArr& vmap, MapArr& umap,
               const float3 & bbox_min,const float3 & bbox_max);
 
@@ -366,14 +390,14 @@ namespace pcl
       unkRaycastVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                         float tranc_dist, float min_range, const float3& volume_size,
                         const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                        const RaycastFilter & filter,
+                        const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                         MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids);
 
       void
       unkRaycastBBoxVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                             float tranc_dist, float min_range, const float3& volume_size,
                             const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                            const RaycastFilter & filter,
+                            const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                             MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids,
                             const float3 & bbox_min, const float3 & bbox_max);
 

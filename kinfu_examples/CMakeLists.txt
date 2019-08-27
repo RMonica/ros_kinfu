@@ -49,6 +49,16 @@ target_link_libraries(save_mesh
   ${Boost_LIBRARIES}
 )
 
+add_executable(save_voxelgrid src/save_voxelgrid.cpp)
+
+add_dependencies(save_voxelgrid ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(save_voxelgrid
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+
 #############
 ## Install ##
 #############

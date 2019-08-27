@@ -554,7 +554,7 @@ void WorldDownloadManager::extractViewWorker(kinfu_msgs::KinfuTsdfRequestConstPt
 
 void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestConstPtr req)
 {
-  ROS_INFO("kinfu: Extract View Worker started.");
+  ROS_INFO("kinfu: Extract View Cloud Worker started.");
   // prepare with same header
   kinfu_msgs::RequestResultPtr resp(new kinfu_msgs::RequestResult());
   resp->tsdf_header = req->tsdf_header;
@@ -568,6 +568,14 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
 
   const bool has_intrinsics = req->request_camera_intrinsics;
 
+  const bool has_bounding_box = req->request_bounding_box;
+  Eigen::Vector3f bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
+  Eigen::Vector3f bbox_max(req->bounding_box_max.x,req->bounding_box_max.y,req->bounding_box_max.z);
+
+  const bool has_sphere = req->request_sphere;
+  Eigen::Vector3f sphere_center(req->sphere_center.x,req->sphere_center.y,req->sphere_center.z);
+  float sphere_radius = req->sphere_radius;
+
   ROS_INFO("kinfu: Locking kinfu...");
   if (!lockKinfu())
     return; // shutting down or synchronization error
@@ -578,11 +586,32 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   const uint cols = has_intrinsics ? req->camera_intrinsics.size_x : m_kinfu->cols();
   const uint size = rows * cols;
 
+  if (has_bounding_box)
+  {
+    Eigen::Vector3f t_bbox_min = m_reverse_initial_transformation.inverse() * bbox_min;
+    Eigen::Vector3f t_bbox_max = m_reverse_initial_transformation.inverse() * bbox_max;
+    bbox_min = t_bbox_min.array().min(t_bbox_max.array());
+    bbox_max = t_bbox_min.array().max(t_bbox_max.array());
+    bbox_min -= Eigen::Vector3f::Ones() * VOXEL_EPSILON;
+    bbox_min += Eigen::Vector3f::Ones() * VOXEL_EPSILON;
+    ROS_INFO_STREAM("kinfu: ray caster: bounding box filter at [" <<
+                    bbox_min.transpose() << "]-[" << bbox_max.transpose() << "]");
+    m_raycaster->setBoundingBoxFilter(bbox_min,bbox_max);
+  }
+  if (has_sphere)
+  {
+    sphere_center = m_reverse_initial_transformation.inverse() * sphere_center;
+    sphere_radius = sphere_radius + VOXEL_EPSILON;
+    ROS_INFO_STREAM("kinfu: raycaster: sphere filter at [" << sphere_center.transpose() << "] " << sphere_radius);
+    m_raycaster->setSphereFilter(sphere_center,sphere_radius);
+  }
+
   if (!shiftNear(view_pose,req->tsdf_center_distance,req->shift_distance_threshold))
     return; // error or shutting down
 
   m_raycaster->setWithKnown(true);
   m_raycaster->setWithVertexMap(true);
+  m_raycaster->setSkipUnknownOutsideFilter(req->skip_unknown_outside_filter);
 
   ROS_INFO("kinfu: generating scene...");
   m_raycaster->run ( m_kinfu->volume (), view_pose, m_kinfu->getCyclicalBufferStructure ());
@@ -600,82 +629,41 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
                                m_kinfu->getCyclicalBufferStructure()->origin_metric.y,
                                m_kinfu->getCyclicalBufferStructure()->origin_metric.z);
 
-  unlockKinfu();
+  // emitter shadow
+  if (req->request_emitter_shadow_removal)
+  {
+    float fx,fy,cx,cy;
+    m_raycaster->getIntrinsics(fx,fy,cx,cy);
+    intensity_host = emitterShadowRemoval(fx,fy,cx,cy,rows,cols,req->distance_x_camera_emitter,intensity_host);
+  }
 
-  const bool request_bounding_box = req->request_bounding_box;
-  const bool request_sphere = req->request_sphere;
+  unlockKinfu();
 
   ROS_INFO("kinfu: Applying transform...");
   PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
-  if (!request_bounding_box && !request_sphere)
+  cloud->resize(size);
+  for (uint i = 0; i < size; i++)
   {
-    cloud->resize(size);
-    for (uint i = 0; i < size; i++)
+    if (intensity_host[i] == 0.0)
     {
-      if (intensity_host[i] == 0.0)
-      {
-        (*cloud)[i].x = NAN;
-        (*cloud)[i].y = NAN;
-        (*cloud)[i].z = NAN;
-        (*cloud)[i].intensity = 0.0;
-        continue;
-      }
+      (*cloud)[i].x = NAN;
+      (*cloud)[i].y = NAN;
+      (*cloud)[i].z = NAN;
+      (*cloud)[i].intensity = 0.0;
+      continue;
+    }
 
-      const Eigen::Vector3f ept(view_host[i],view_host[i + size],view_host[i + size * 2]);
-      const Eigen::Vector3f tpt = m_reverse_initial_transformation * (ept + cycl_o);
-      (*cloud)[i].x = tpt.x();
-      (*cloud)[i].y = tpt.y();
-      (*cloud)[i].z = tpt.z();
-      (*cloud)[i].intensity = intensity_host[i];
-      }
-
-    cloud->width = cols;
-    cloud->height = rows;
-    cloud->is_dense = false;
+    const Eigen::Vector3f ept(view_host[i],view_host[i + size],view_host[i + size * 2]);
+    const Eigen::Vector3f tpt = m_reverse_initial_transformation * (ept + cycl_o);
+    (*cloud)[i].x = tpt.x();
+    (*cloud)[i].y = tpt.y();
+    (*cloud)[i].z = tpt.z();
+    (*cloud)[i].intensity = intensity_host[i];
   }
 
-  if (request_bounding_box || request_sphere)
-  {
-    ROS_INFO("kinfu: Applying bounding box(%s) or sphere(%s)...",
-             request_bounding_box ? "Y" : "N",request_sphere ? "Y" : "N");
-    const Eigen::Vector3f bbox_min(req->bounding_box_min.x,req->bounding_box_min.y,req->bounding_box_min.z);
-    const Eigen::Vector3f bbox_max(req->bounding_box_max.x,req->bounding_box_max.y,req->bounding_box_max.z);
-
-    const Eigen::Vector3f sphere_center(req->sphere_center.x,req->sphere_center.y,req->sphere_center.z);
-    const float sphere_radius = req->sphere_radius;
-
-    cloud->resize(size);
-    for (uint i = 0; i < size; i++)
-    {
-      bool ok = true;
-      if (intensity_host[i] == 0.0 || std::isnan(intensity_host[i]))
-        ok = false;
-
-      const Eigen::Vector3f ept(view_host[i],view_host[i + size],view_host[i + size * 2]);
-      if (std::isnan(ept.x()) || std::isnan(ept.y()) || std::isnan(ept.z()))
-        ok = false;
-
-      const Eigen::Vector3f tpt = m_reverse_initial_transformation * (ept + cycl_o);
-      if (request_bounding_box)
-        if ((tpt.array() < bbox_min.array()).any() || (tpt.array() > bbox_max.array()).any())
-          ok = false;
-
-      if (request_sphere)
-        if ((tpt - sphere_center).squaredNorm() > sphere_radius * sphere_radius)
-          ok = false;
-
-      pcl::PointXYZI ppt;
-      if (ok)
-        { ppt.x = tpt.x(); ppt.y = tpt.y(); ppt.z = tpt.z(); ppt.intensity = intensity_host[i]; }
-      else
-        { ppt.x = NAN; ppt.y = NAN; ppt.z = NAN; ppt.intensity = 0.0; }
-      (*cloud)[i] = ppt;
-      }
-
-    cloud->width = cols;
-    cloud->height = rows;
-    cloud->is_dense = false;
-  }
+  cloud->width = cols;
+  cloud->height = rows;
+  cloud->is_dense = false;
 
   ROS_INFO("kinfu: Sending message...");
   pcl::toROSMsg(*cloud,resp->pointcloud);
@@ -885,6 +873,7 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
   m_raycaster->setWithKnown(true);
   m_raycaster->setWithVertexMap(false);
   m_raycaster->setWithVoxelIds(false);
+  m_raycaster->setSkipUnknownOutsideFilter(req->skip_unknown_outside_filter);
 
   if (!score_requested)
     resp->uint_values.data.resize(view_poses.size() * 2,0);
@@ -909,6 +898,15 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
     download_time += ros::Time::now() - download_time_start;
 
     const ros::Time counter_time_start = ros::Time::now();
+
+    // emitter shadow
+    if (req->request_emitter_shadow_removal)
+    {
+      float fx,fy,cx,cy;
+      m_raycaster->getIntrinsics(fx,fy,cx,cy);
+      intensity_host = emitterShadowRemoval(fx,fy,cx,cy,rows,cols,req->distance_x_camera_emitter,intensity_host);
+    }
+
     if (!score_requested)
     {
       for (uint h = 0; h < size; h++)
@@ -946,6 +944,7 @@ void WorldDownloadManager::extractVoxelCountViewsWorker(kinfu_msgs::KinfuTsdfReq
         }
       }
     }
+
     counter_time += ros::Time::now() - counter_time_start;
   }
 
@@ -1029,7 +1028,8 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
     const Eigen::Vector3f ept(ppt.x,ppt.y,ppt.z);
 
     const Eigen::Vector3f point = m_reverse_initial_transformation * (ept * kinfu_voxel_size);
-    const Eigen::Vector3i ipoint = ((point - bbox_min) / voxel_size + Eigen::Vector3f::Ones() * 0.5).cast<int>();
+    const Eigen::Vector3i ipoint = ((point - bbox_min) / voxel_size + Eigen::Vector3f::Ones() * 0.5).
+        array().floor().cast<int>();
 
     if ((ipoint.array() < 0).any() || (ipoint.array() >= voxel_count.array()).any())
       continue; // outside bounding box
@@ -1053,7 +1053,8 @@ void WorldDownloadManager::extractVoxelGridWorker(kinfu_msgs::KinfuTsdfRequestCo
       const Eigen::Vector3f ept(ppt.x,ppt.y,ppt.z);
 
       const Eigen::Vector3f point = m_reverse_initial_transformation * ept;
-      const Eigen::Vector3i ipoint = ((point - bbox_min) / voxel_size + Eigen::Vector3f::Ones() * 0.5).cast<int>();
+      const Eigen::Vector3i ipoint = ((point - bbox_min) / voxel_size + Eigen::Vector3f::Ones() * 0.5).
+          array().floor().cast<int>();
 
       if ((ipoint.array() < 0).any() || (ipoint.array() >= voxel_count.array()).any())
         continue; // outside bounding box

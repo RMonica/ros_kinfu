@@ -363,6 +363,30 @@ pcl::kinfuLS::WorldModel<PointT>::clearSphere(const Eigen::Vector3f & center,flo
 
 template <typename PointT>
 void
+pcl::kinfuLS::WorldModel<PointT>::clearCylinder(const Eigen::Vector3f & center,const Eigen::Vector3f & height_bearing,
+                                                float radius,float half_height)
+{
+  boost::shared_ptr<std::vector<int> > indices = boost::shared_ptr<std::vector<int> >(new std::vector<int>);
+  const unsigned int size = world_->size();
+
+  for (unsigned int i = 0; i < size; i++)
+  {
+    PointT & pt = (*world_)[i];
+    Eigen::Vector3f ept(pt.x,pt.y,pt.z);
+
+    Eigen::Vector3f projected_pt = center - height_bearing * height_bearing.dot(center - ept);
+
+    if ((center - projected_pt).norm() < half_height && // check in height segment
+        (projected_pt - ept).norm() < radius) // check in radius
+      indices->push_back(i);
+  }
+
+  setIndicesAsNans(world_,indices);
+  pcl::removeNaNFromPointCloud (*world_,*world_,*indices);
+}
+
+template <typename PointT>
+void
 pcl::kinfuLS::WorldModel<PointT>::clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max)
 {
   boost::shared_ptr<std::vector<int> > indices = boost::shared_ptr<std::vector<int> >(new std::vector<int>);

@@ -305,7 +305,7 @@ class ImageSubscriber
     m_nh.param<std::string>(PARAM_NAME_CAMERA_INFO_TOPIC,camera_info_topic,prefix_topic + PARAM_DEFAULT_CAMERA_INFO_TOPIC);
 
     std::string image_topic;
-    m_nh.param<std::string>(PARAM_NAME_IMAGE_TOPIC,image_topic,prefix_topic + PARAM_NAME_IMAGE_TOPIC);
+    m_nh.param<std::string>(PARAM_NAME_IMAGE_TOPIC,image_topic,prefix_topic + PARAM_DEFAULT_IMAGE_TOPIC);
 
     bool enable_texture_extraction = PARAM_DEFAULT_EXTRACT_TEXTURES;
     m_nh.getParam(PARAM_NAME_EXTRACT_TEXTURES,enable_texture_extraction);
@@ -411,7 +411,8 @@ struct KinFuLSApp
   {
     PCD_BIN = 1, PCD_ASCII = 2, PLY = 3, MESH_PLY = 7, MESH_VTK = 8
   };
-  KinFuLSApp(float vsz, const int vr, float shiftDistance, ros::NodeHandle & nodeHandle, uint depth_height, uint depth_width) :
+  KinFuLSApp(float vsz, float target_point_distance, const int vr, float shiftDistance,
+             ros::NodeHandle & nodeHandle, uint depth_height, uint depth_width) :
       scan_(false), scan_mesh_(false), scan_volume_(false), independent_camera_(false),
       registration_(false), integrate_colors_(false), pcd_source_(false), focal_length_(-1.f),
       m_reset_subscriber(nodeHandle,m_mutex,m_cond),m_image_subscriber(nodeHandle,m_mutex,m_cond),
@@ -428,7 +429,7 @@ struct KinFuLSApp
     ROS_INFO("Volume size is set to %.2f meters\n", vsz);
     ROS_INFO("Volume resolution is set to %d voxels\n", vr);
     ROS_INFO("Volume will shift when the camera target point is farther than %.2f meters from the volume center\n", shiftDistance);
-    ROS_INFO("The target point is located at [0, 0, %.2f] in camera coordinates\n", 0.6*vsz);
+    ROS_INFO("The target point is located at [0, 0, %.2f] in camera coordinates\n", target_point_distance);
     ROS_INFO("------------------------\n");
 
     // warning message if shifting distance is abnormally big compared to volume size
@@ -436,6 +437,7 @@ struct KinFuLSApp
       ROS_WARN("WARNING Shifting distance (%.2f) is very large compared to the volume size (%.2f).\nYou can modify it using --shifting_distance.\n", shiftDistance, vsz);
 
     kinfu_ = new pcl::gpu::kinfuLS::KinfuTracker(volume_size, volume_resolution, shiftDistance, depth_height, depth_width);
+    kinfu_->setDistanceCameraTarget(target_point_distance);
     Eigen::Matrix3f R = Eigen::Matrix3f::Identity ();   // * AngleAxisf( pcl::deg2rad(-30.f), Vector3f::UnitX());
     Eigen::Vector3f t = volume_size * 0.5f - Eigen::Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
 
@@ -479,6 +481,7 @@ struct KinFuLSApp
       bool reset;
       std::string reset_command_id;
       bool hasimage;
+      bool hint_ok = true;
       bool hasrequests;
       bool isrunning;
       bool istriggered;
@@ -486,6 +489,7 @@ struct KinFuLSApp
       KinfuTracker::THint pose_hint;
       CommandSubscriber::Sphere::Ptr clear_sphere;
       CommandSubscriber::BBox::Ptr clear_bbox;
+      CommandSubscriber::Cylinder::Ptr clear_cylinder;
 
       while (!m_request_termination && 
         !(m_reset_subscriber.isResetRequired()) &&
@@ -493,6 +497,7 @@ struct KinFuLSApp
         !(m_world_download_manager.hasRequests()) &&
         !(m_command_subscriber.hasClearSphere()) &&
         !(m_command_subscriber.hasClearBBox()) &&
+        !(m_command_subscriber.hasClearCylinder()) &&
         !(m_command_subscriber.isTriggered()))
         m_cond.wait(main_lock);
 
@@ -529,7 +534,7 @@ struct KinFuLSApp
         {
           pose_hint.type = m_command_subscriber.hasForcedHint() ?
             KinfuTracker::THint::HINT_TYPE_FORCED : KinfuTracker::THint::HINT_TYPE_HINT;
-          pose_hint.transform = m_command_subscriber.getHintTransform();
+          pose_hint.transform = m_command_subscriber.getHintTransform(hint_ok);
           m_command_subscriber.clearHint();
         }
 
@@ -552,6 +557,9 @@ struct KinFuLSApp
       clear_bbox = m_command_subscriber.getClearBBox();
       m_command_subscriber.clearClearBBox();
 
+      clear_cylinder = m_command_subscriber.getClearCylinder();
+      m_command_subscriber.clearClearCylinder();
+
       // The information from ROS was copied, this may run along the main thread.
       main_lock.unlock();
 
@@ -562,14 +570,14 @@ struct KinFuLSApp
         ROS_INFO("KinFu was reset.");
       }
 
-      if (hasimage && (isrunning || istriggered))
+      if (hasimage && hint_ok && (isrunning || istriggered))
         {
         execute(depth,cameraInfo,rgb,pose_hint);
         if (istriggered)
           m_command_subscriber.ack(istriggered_command_id,true);
         }
 
-      if ((clear_sphere || clear_bbox || hasrequests) && !kinfu_->isShiftComplete())
+      if ((clear_sphere || clear_bbox || clear_cylinder || hasrequests) && !kinfu_->isShiftComplete())
       {
         ROS_INFO("kinfu: shift incomplete but requests pending, waiting for it...");
         ros::Rate rate(10);
@@ -595,6 +603,13 @@ struct KinFuLSApp
         m_command_subscriber.ack(clear_bbox->command_id,true);
       }
 
+      if (clear_cylinder)
+      {
+        kinfu_->clearCylinder(clear_cylinder->b_min,clear_cylinder->b_max,clear_cylinder->radius,clear_cylinder->set_to_empty);
+        ROS_INFO("KinFu cleared cylinder.");
+        m_command_subscriber.ack(clear_cylinder->command_id,true);
+      }
+
       if (hasrequests)
         m_world_download_manager.respond(kinfu_);
 
@@ -603,10 +618,12 @@ struct KinFuLSApp
     }
   }
 
-  suint * convertToShortIntArray(const sensor_msgs::ImageConstPtr& depth,size_t & step,std::vector<suint> & data)
+  suint * convertToShortIntArray(const sensor_msgs::ImageConstPtr& depth,size_t & step,std::vector<suint> & data,
+                                 std::vector<suint> & empty_data)
   {
     const size_t height = depth->height;
     const size_t width = depth->width;
+    const size_t size = height * width;
     const std::string encoding = depth->encoding;
     const bool is_float32 = encoding == "32FC1";
     const bool is_uint16 = encoding == "16UC1";
@@ -624,7 +641,7 @@ struct KinFuLSApp
     }
     else
     {
-      data.assign(height * width,0);
+      data.assign(size,0);
 
       for (uint y = 0; y < height; y++)
         for (uint x = 0; x < width; x++)
@@ -633,7 +650,17 @@ struct KinFuLSApp
           {
             float f;
             std::memcpy(&f,&(depth->data[depth->step * y + x * 4]),4);
-            data[y * width + x] = suint(f * 1000.0 + 0.5);
+            if (std::isfinite(f))
+            {
+              if (f >= 0.0)
+                data[y * width + x] = suint(f * 1000.0 + 0.5);
+              else
+              {
+                if (ROS_UNLIKELY(empty_data.empty()))
+                  empty_data.assign(size,0);
+                empty_data[y * width + x] = suint((-f) * 1000.0 + 0.5);
+              }
+            }
           }
           if (is_uint16 && is_bigendian)
           {
@@ -671,10 +698,13 @@ struct KinFuLSApp
 
     // convert depth to short uint little-endian format
     std::vector<suint> depth_storage;
+    std::vector<suint> empty_depth_storage;
     size_t depth_step;
-    suint * depth_ptr = convertToShortIntArray(depth,depth_step,depth_storage);
+    suint * depth_ptr = convertToShortIntArray(depth,depth_step,depth_storage,empty_depth_storage);
 
     depth_device_.upload (depth_ptr, depth_step, depth->height, depth->width);
+    if (!empty_depth_storage.empty())
+      empty_depth_device_.upload(empty_depth_storage.data(), depth_step, depth->height, depth->width);
      // if (integrate_colors_)
      //    image_view_.colors_device_.upload (rgb24.data, rgb24.step, rgb24.rows, rgb24.cols);
 
@@ -694,6 +724,8 @@ struct KinFuLSApp
     
     SampledScopeTime fps(time_ms_);
     (*kinfu_)(depth_device_,pose_hint);
+    if (!empty_depth_storage.empty())
+      kinfu_->IntegrateEmptyMap(empty_depth_device_);
     if (kinfu_->isFinished())
       nh.shutdown();
 
@@ -830,6 +862,7 @@ struct KinFuLSApp
   WorldDownloadManager m_world_download_manager;
 
   KinfuTracker::DepthMap depth_device_;
+  KinfuTracker::DepthMap empty_depth_device_;
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr tsdf_cloud_ptr_;
 
@@ -910,7 +943,10 @@ int main(int argc, char* argv[])
   nh.getParam(PARAM_NAME_DEPTH_HEIGHT,depth_height);
   nh.getParam(PARAM_NAME_DEPTH_WIDTH,depth_width);
 
-  KinFuLSApp app(volume_size, volume_resolution, shift_distance, nh, depth_height, depth_width);
+  double target_point_distance = volume_size * 0.6;
+  nh.getParam(PARAM_NAME_TARGET_POINT_DISTANCE,target_point_distance);
+
+  KinFuLSApp app(volume_size, target_point_distance, volume_resolution, shift_distance, nh, depth_height, depth_width);
 
   int snapshot_rate = PARAM_DEFAULT_SNAPSHOT_RATE;
   nh.getParam(PARAM_NAME_SNAPSHOT_RATE, snapshot_rate);

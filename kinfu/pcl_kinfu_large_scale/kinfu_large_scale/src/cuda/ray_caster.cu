@@ -52,6 +52,26 @@ namespace pcl
         return make_float3(a.x * b.x,a.y * b.y,a.z * b.z);
       }
 
+      __device__ bool evaluateRaycastFilter(RaycastFilter filter,float3 pt)
+      {
+        if (filter.has_bbox)
+        {
+          if (pt.x < filter.bbox_min.x || pt.y < filter.bbox_min.y || pt.z < filter.bbox_min.z ||
+              pt.x >= filter.bbox_max.x || pt.y >= filter.bbox_max.y || pt.z >= filter.bbox_max.z)
+            return false;
+        }
+
+        if (filter.has_sphere)
+        {
+          float3 diff = pt - filter.sphere_center;
+          float sqnorm = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+          if (sqnorm > filter.sphere_radius * filter.sphere_radius)
+            return false;
+        }
+
+        return true;
+      }
+
       template <class StoreCondition,class StoreAction,class SearchCondition>
       struct RayCaster
       {
@@ -298,15 +318,21 @@ namespace pcl
 
           //infinite loop guard
           const float max_time = fmin(time_exit_volume,3.0 * (volume_size.x + volume_size.y + volume_size.z));
+          const float min_time_step = min(cell_size.x,min(cell_size.y,cell_size.z));
 
           float curr_time_step = time_step;
+          float time_step_prev;
+
+          float tsdf_prev = tsdf;
+          int weight_prev = weight;
 
           bool zero_crossing = false;
 
           for (; time_curr < max_time; time_curr += curr_time_step)
           {
-            float tsdf_prev = tsdf;
-            int weight_prev = weight;
+            tsdf_prev = tsdf;
+            weight_prev = weight;
+            time_step_prev = curr_time_step;
 
             const float3 world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
             if (!search_condition.Evaluate(world_pt))
@@ -322,17 +348,23 @@ namespace pcl
             readTsdf (g.x, g.y, g.z, buffer, tsdf, weight);
 
             {
-              float new_time_step;
-              if (store_condition.ChangeTimeStep(tsdf_prev,tsdf,weight_prev,weight,curr_time_step,new_time_step))
+              float new_time_step = curr_time_step;
+              bool rewind = false;
+              if (store_condition.ChangeTimeStep(tsdf_prev,tsdf,weight_prev,weight,time_step,min_time_step,
+                                                 curr_time_step,new_time_step,rewind))
               {
-                if (new_time_step > min(cell_size.x,min(cell_size.y,cell_size.z)))
+                if (new_time_step > min_time_step)
                 {
-                  tsdf = tsdf_prev;
-                  weight = weight_prev;
+                  if (rewind)
+                  {
+                    tsdf = tsdf_prev;
+                    weight = weight_prev;
 
-                  time_curr -= curr_time_step;
+                    time_curr -= curr_time_step;
+                  }
                   curr_time_step = new_time_step;
-                  continue;
+                  if (rewind)
+                    continue;
                 }
               }
             }
@@ -340,8 +372,9 @@ namespace pcl
             if (tsdf_prev < 0.f && tsdf > 0.f)
               return;
 
-            zero_crossing = store_condition.Evaluate(tsdf_prev,tsdf,weight_prev,weight);
-            if (zero_crossing && (time_curr * norm_ray_next.z) < min_range)
+            bool below_min_range = (time_curr * norm_ray_next.z) < min_range;
+            zero_crossing = store_condition.Evaluate(tsdf_prev,tsdf,weight_prev,weight,world_pt,below_min_range);
+            if (zero_crossing && below_min_range)
               return;
 
             if (zero_crossing)
@@ -351,10 +384,10 @@ namespace pcl
           if (zero_crossing)
           {
             const float3 world_pt_prev = ray_start + ray_dir * (time_curr);
-            const float3 world_pt = ray_start + ray_dir * (time_curr + curr_time_step);
+            const float3 world_pt = ray_start + ray_dir * (time_curr + time_step_prev);
 
-            store_action.Store(world_pt_prev,world_pt,g,tsdf,weight,time_curr,time_step,ray_start,ray_dir,
-              *this,x,y,buffer);
+            store_action.Store(world_pt_prev,world_pt,g,tsdf_prev,tsdf,weight_prev,weight,time_curr,time_step,
+                               ray_start,ray_dir,*this,x,y,buffer);
           }
         }
       };
@@ -398,13 +431,14 @@ namespace pcl
 
       struct ZeroCrossingStoreCondition
       {
-        __device__ __forceinline__ bool Evaluate(float tsdf_prev,float tsdf_curr,int /*weight_prev*/,int /*weight_curr*/)
+        __device__ __forceinline__ bool Evaluate(float tsdf_prev,float tsdf_curr,int /*weight_prev*/,int /*weight_curr*/,
+                                                 float3 /*world_pt*/,bool /*below_min_range*/)
         {
-          return tsdf_prev > 0.0f && tsdf_curr < 0.0f;
+          return (tsdf_prev > 0.0f && tsdf_curr < 0.0f) || (tsdf_prev < 0.f && tsdf_curr > 0.f);
         }
 
         __device__ __forceinline__ bool ChangeTimeStep(float /*tsdf_prev*/,float /*tsdf*/,int /*weight_prev*/,int /*weight_curr*/,
-          float /*time_step*/,float & /*new_time_step*/)
+          float /*orig_time_step*/,float /*min_time_step*/,float /*time_step*/,float & /*new_time_step*/,bool & /*rewind*/)
         {
           return false;
         }
@@ -412,21 +446,57 @@ namespace pcl
 
       struct NotEmptyStoreCondition
       {
-        __device__ __forceinline__ bool Evaluate(float /*tsdf_prev*/,float tsdf_curr,int /*weight_prev*/,int weight_curr)
+        __device__ __forceinline__ bool Evaluate(float /*tsdf_prev*/,float tsdf_curr,int /*weight_prev*/,int weight_curr,
+                                                 float3 /*world_pt*/,bool /*below_min_range*/)
         {
           return tsdf_curr < 0.0f || weight_curr == 0;
         }
 
         __device__ __forceinline__ bool ChangeTimeStep(float /*tsdf_prev*/,float /*tsdf*/,int weight_prev,int weight_curr,
-          float time_step,float & new_time_step)
+          float /*orig_time_step*/,float min_time_step,float time_step,float & new_time_step,bool & rewind)
         {
-          if (weight_curr == 0 && weight_prev != 0)
+          if (weight_curr == 0 && weight_prev != 0 && (time_step / 2.0f > min_time_step))
           {
-            new_time_step = time_step / 2.0;
+            new_time_step = time_step / 2.0f;
+            rewind = true;
             return true;
           }
           return false;
         }
+      };
+
+      struct NotEmptyStoreConditionUnkFiltered
+      {
+        __device__ __forceinline__ bool Evaluate(float /*tsdf_prev*/,float tsdf_curr,int /*weight_prev*/,int weight_curr,
+                                                 float3 world_pt,bool below_min_range)
+        {
+          if (tsdf_curr < 0.0f)
+            return true;
+          if (weight_curr == 0 && below_min_range)
+            return true;
+          if (weight_curr == 0 && evaluateRaycastFilter(filter, world_pt))
+            return true;
+          return false;
+        }
+
+        __device__ __forceinline__ bool ChangeTimeStep(float /*tsdf_prev*/,float /*tsdf*/,int weight_prev,int weight_curr,
+          float orig_time_step,float min_time_step,float time_step,float & new_time_step,bool & rewind)
+        {
+          if (weight_curr == 0 && weight_prev != 0 && (time_step / 2.0f > min_time_step))
+          {
+            new_time_step = time_step / 2.0f;
+            rewind = true;
+            return true;
+          }
+          if (weight_curr == 0 && weight_prev != 0 && (time_step / 2.0f <= min_time_step))
+          {
+            new_time_step = orig_time_step;
+            return true; // do not rewind
+          }
+          return false;
+        }
+
+        RaycastFilter filter;
       };
 
       struct InterpolatePointAndNormalStoreAction
@@ -440,12 +510,15 @@ namespace pcl
 
         template <class _RayCaster>
         __device__ __forceinline__ void Store(const float3 & world_pt_prev,const float3 & world_pt,
-          const int3 & /*voxel_id*/,float /*tsdf*/,float weight,
+          const int3 & /*voxel_id*/,float tsdf_prev,float tsdf,float /*weight_prev*/,float weight,
           float time_curr,float time_step,const float3 & ray_start,const float3 & ray_dir,
           const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & buffer)
         {
           if (weight == 0)
             return;
+
+          if (tsdf_prev < 0.f && tsdf > 0.f)
+            return; // crossing surface from wrong side
 
           float step_correction = 0.5;
 
@@ -533,24 +606,12 @@ namespace pcl
 
         template <class _RayCaster>
         __device__ __forceinline__ void Store(const float3 & /*world_pt_prev*/,const float3 & world_pt,
-          const int3 & voxel_id,float /*tsdf*/,float weight,
+          const int3 & voxel_id,float /*tsdf_prev*/,float /*tsdf*/,float /*weight_prev*/,float weight,
           float time_curr,float /*time_step*/,const float3 & /*ray_start*/,const float3 & /*ray_dir*/,
           const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & buffer)
         {
-          if (filter.has_bbox)
-          {
-            if (world_pt.x < filter.bbox_min.x || world_pt.y < filter.bbox_min.y || world_pt.z < filter.bbox_min.z ||
-                world_pt.x >= filter.bbox_max.x || world_pt.y >= filter.bbox_max.y || world_pt.z >= filter.bbox_max.z)
-              return;
-          }
-
-          if (filter.has_sphere)
-          {
-            float3 diff = world_pt - filter.sphere_center;
-            float sqnorm = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-            if (sqnorm > filter.sphere_radius * filter.sphere_radius)
-              return;
-          }
+          if (!evaluateRaycastFilter(filter, world_pt) && weight == 0)
+            return;
 
           if (STORE_POSE & STORE_POSE_WORLD)
           {
@@ -656,93 +717,111 @@ namespace pcl
       unkRaycast (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                   float tranc_dist, float min_range, const float3& volume_size,
                   const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                  const RaycastFilter & filter, MapArr& vmap, MapArr& umap)
+                  const RaycastFilter & filter, const bool skip_unknown_outside_filter, MapArr& vmap, MapArr& umap)
       {
+        NotEmptyStoreConditionUnkFiltered neuf;
+        if (skip_unknown_outside_filter)
+          neuf.filter = filter;
         SignedSensorDistanceWithPoseStoreAction nesc;
         nesc.umap = umap;
         nesc.filter = filter;
-        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithPoseStoreAction,TrueSearchCondition>(
+        templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceWithPoseStoreAction,TrueSearchCondition>(
           intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
-          NotEmptyStoreCondition(),nesc,TrueSearchCondition());
+          neuf,nesc,TrueSearchCondition());
       }
 
       void
       unkRaycastBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                       float tranc_dist, float min_range, const float3& volume_size,
                       const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                      const RaycastFilter & filter, MapArr& vmap, MapArr& umap,
+                      const RaycastFilter & filter, const bool skip_unknown_outside_filter, MapArr& vmap, MapArr& umap,
                       const float3 & bbox_min,const float3 & bbox_max)
       {
+        NotEmptyStoreConditionUnkFiltered neuf;
+        if (skip_unknown_outside_filter)
+          neuf.filter = filter;
         SignedSensorDistanceWithPoseStoreAction nesc;
         nesc.umap = umap;
         nesc.filter = filter;
-        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithPoseStoreAction,BBoxSearchCondition>
+        templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceWithPoseStoreAction,BBoxSearchCondition>
           (intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
-          NotEmptyStoreCondition(),nesc,BBoxSearchCondition(bbox_min,bbox_max));
+          neuf,nesc,BBoxSearchCondition(bbox_min,bbox_max));
       }
 
       void
       unkRaycastVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                         float tranc_dist, float min_range, const float3& volume_size,
                         const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                        const RaycastFilter & filter,
+                        const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                         MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids)
       {
+        NotEmptyStoreConditionUnkFiltered neuf;
+        if (skip_unknown_outside_filter)
+          neuf.filter = filter;
         SignedSensorDistanceWithVoxelIndexStoreAction nesc;
         nesc.umap = umap;
         nesc.filter = filter;
         nesc.voxel_map = voxel_ids;
-        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithVoxelIndexStoreAction,TrueSearchCondition>(
+        templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceWithVoxelIndexStoreAction,TrueSearchCondition>(
           intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
-          NotEmptyStoreCondition(),nesc,TrueSearchCondition());
+          neuf,nesc,TrueSearchCondition());
       }
 
       void
       unkRaycastBBoxVoxelIndex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                             float tranc_dist, float min_range, const float3& volume_size,
                             const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                            const RaycastFilter & filter,
+                            const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                             MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids,
                             const float3 & bbox_min, const float3 & bbox_max)
       {
+        NotEmptyStoreConditionUnkFiltered neuf;
+        if (skip_unknown_outside_filter)
+          neuf.filter = filter;
         SignedSensorDistanceWithVoxelIndexStoreAction nesc;
         nesc.umap = umap;
         nesc.filter = filter;
         nesc.voxel_map = voxel_ids;
-        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceWithVoxelIndexStoreAction,BBoxSearchCondition>(
+        templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceWithVoxelIndexStoreAction,BBoxSearchCondition>(
           intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
-          NotEmptyStoreCondition(),nesc,BBoxSearchCondition(bbox_min,bbox_max));
+          neuf,nesc,BBoxSearchCondition(bbox_min,bbox_max));
       }
 
       void
       unkRaycastNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                         float tranc_dist, float min_range, const float3& volume_size,
                         const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                        const RaycastFilter & filter,
+                        const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                         MapArr& vmap, MapArr& umap)
       {
+        NotEmptyStoreConditionUnkFiltered neuf;
+        if (skip_unknown_outside_filter)
+          neuf.filter = filter;
         SignedSensorDistanceNoPoseStoreAction nesc;
         nesc.umap = umap;
         nesc.filter = filter;
-        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceNoPoseStoreAction,TrueSearchCondition>(
+        templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceNoPoseStoreAction,TrueSearchCondition>(
           intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
-          NotEmptyStoreCondition(),nesc,TrueSearchCondition());
+          neuf,nesc,TrueSearchCondition());
       }
 
       void
       unkRaycastBBoxNoVertex (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
                             float tranc_dist, float min_range, const float3& volume_size,
                             const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
-                            const RaycastFilter & filter,
+                            const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                             MapArr& vmap, MapArr& umap,
                             const float3 & bbox_min, const float3 & bbox_max)
       {
+        NotEmptyStoreConditionUnkFiltered neuf;
+        if (skip_unknown_outside_filter)
+          neuf.filter = filter;
         SignedSensorDistanceNoPoseStoreAction nesc;
         nesc.umap = umap;
         nesc.filter = filter;
-        templatedRaycast<NotEmptyStoreCondition,SignedSensorDistanceNoPoseStoreAction,BBoxSearchCondition>(
+        templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceNoPoseStoreAction,BBoxSearchCondition>(
           intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
-          NotEmptyStoreCondition(),nesc,BBoxSearchCondition(bbox_min,bbox_max));
+          neuf,nesc,BBoxSearchCondition(bbox_min,bbox_max));
       }
     }
   }

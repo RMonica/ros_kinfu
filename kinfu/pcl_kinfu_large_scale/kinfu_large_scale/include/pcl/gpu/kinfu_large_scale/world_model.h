@@ -147,6 +147,9 @@ namespace pcl
 
         void clearSphere(const Eigen::Vector3f & center,float radius);
 
+        void clearCylinder(const Eigen::Vector3f & center,const Eigen::Vector3f & height_bearing,
+                           float radius,float half_height);
+
         void clearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max);
 
         /** \brief Returns the world as a point cloud.

@@ -74,6 +74,7 @@ pcl::gpu::kinfuLS::RayCaster::RayCaster(int rows_arg, int cols_arg, float fx, fl
 
   with_vertex_ = true;
   with_known_ = false;
+  skip_unknown_outside_filter_ = false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -91,6 +92,16 @@ pcl::gpu::kinfuLS::RayCaster::setIntrinsics(float fx, float fy, float cx, float 
   fy_ = fy;
   cx_ = cx < 0 ? cols/2 : cx;
   cy_ = cy < 0 ? rows/2 : cy;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void
+pcl::gpu::kinfuLS::RayCaster::getIntrinsics(float & fx, float & fy, float & cx, float & cy) const
+{
+  fx = fx_;
+  fy = fy_;
+  cx = cx_;
+  cy = cy_;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -157,19 +168,21 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
     {
       pcl::device::kinfuLS::unkRaycast (intr, device_R, device_t, tranc_dist, min_range_,
                                         pcl::device::kinfuLS::device_cast<const float3>(volume_size_),
-                                        volume.data(), buffer, raycast_filter, vertex_map_, known_map_);
+                                        volume.data(), buffer, raycast_filter, skip_unknown_outside_filter_,
+                                        vertex_map_, known_map_);
     }
     else if (with_voxel_ids_)
     {
       pcl::device::kinfuLS::unkRaycastVoxelIndex(intr, device_R, device_t, tranc_dist, min_range_,
         pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
-        raycast_filter, vertex_map_, known_map_, voxel_ids_map_);
+        raycast_filter, skip_unknown_outside_filter_, vertex_map_, known_map_, voxel_ids_map_);
     }
     else
     {
       pcl::device::kinfuLS::unkRaycastNoVertex (intr, device_R, device_t, tranc_dist, min_range_,
                                         pcl::device::kinfuLS::device_cast<const float3>(volume_size_),
-                                        volume.data(), buffer, raycast_filter, vertex_map_, known_map_);
+                                        volume.data(), buffer, raycast_filter, skip_unknown_outside_filter_,
+                                        vertex_map_, known_map_);
     }
   }
   else if (with_known_ && has_bbox_)
@@ -188,19 +201,19 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
     {
       pcl::device::kinfuLS::unkRaycastBBox(intr, device_R, device_t, tranc_dist, min_range_,
         pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
-        raycast_filter, vertex_map_, known_map_, device_bbox_min, device_bbox_max);
+        raycast_filter, skip_unknown_outside_filter_, vertex_map_, known_map_, device_bbox_min, device_bbox_max);
     }
     else if (with_voxel_ids_)
     {
       pcl::device::kinfuLS::unkRaycastBBoxVoxelIndex(intr, device_R, device_t, tranc_dist, min_range_,
         pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
-        raycast_filter, vertex_map_, known_map_, voxel_ids_map_, device_bbox_min, device_bbox_max);
+        raycast_filter, skip_unknown_outside_filter_, vertex_map_, known_map_, voxel_ids_map_, device_bbox_min, device_bbox_max);
     }
     else
     {
       pcl::device::kinfuLS::unkRaycastBBoxNoVertex(intr, device_R, device_t, tranc_dist, min_range_,
         pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
-        raycast_filter, vertex_map_, known_map_, device_bbox_min, device_bbox_max);
+        raycast_filter, skip_unknown_outside_filter_, vertex_map_, known_map_, device_bbox_min, device_bbox_max);
     }
   }
 }

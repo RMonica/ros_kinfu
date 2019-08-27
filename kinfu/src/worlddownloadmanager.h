@@ -187,6 +187,10 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
   void initRaycaster(bool has_intrinsics, const kinfu_msgs::KinfuCameraIntrinsics & intr,
     bool has_bounding_box_view,const kinfu_msgs::KinfuCloudPoint & bbox_min,const kinfu_msgs::KinfuCloudPoint & bbox_max);
 
+  std::vector<float> emitterShadowRemoval(const float fx, const float fy, const float cx, const float cy,
+                                          const uint rows, const uint cols, const float emitter_distance,
+                                          const std::vector<float> & intensity);
+
   template <class PointT>
   static void cropMesh(const kinfu_msgs::KinfuCloudPoint & min,
     const kinfu_msgs::KinfuCloudPoint & max,typename pcl::PointCloud<PointT>::ConstPtr cloud,

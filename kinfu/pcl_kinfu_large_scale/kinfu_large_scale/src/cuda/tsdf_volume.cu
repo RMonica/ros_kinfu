@@ -150,6 +150,53 @@ namespace pcl
 
       template<typename T>
       __global__ void
+      clearCylinderKernel(PtrStep<T> volume,int3 volume_size,int3 shift,float3 cylinder_center,float3 height_bearing,
+                          float radius,float half_height,bool set_to_empty)
+      {
+        int x = threadIdx.x + blockIdx.x * blockDim.x;
+        int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+        if (x < volume_size.x && y < volume_size.y)
+        {
+            int ax = x + shift.x;
+            if (ax >= volume_size.x)
+                ax -= volume_size.x;
+            int ay = y + shift.y;
+            if (ay >= volume_size.y)
+                ay -= volume_size.y;
+
+            T *pos = volume.ptr(ay) + ax;
+            int z_step = volume_size.y * volume.step / sizeof(*pos);
+
+  #pragma unroll
+            for(int z = 0; z < volume_size.z; ++z)
+            {
+              int az = z + shift.z;
+              if (az >= volume_size.z)
+                az -= volume_size.z;
+
+              float3 pt;
+              pt.x = float(x);
+              pt.y = float(y);
+              pt.z = float(z);
+
+              // project the point onto the cylinder height segment
+              float3 projected_pt = cylinder_center - height_bearing * dot(cylinder_center - pt,height_bearing);
+
+              if (norm(cylinder_center - projected_pt) < half_height && // check in height segment
+                  norm(projected_pt - pt) < radius) // check in radius
+              {
+                if (set_to_empty)
+                  pack_tsdf(1.0f, 1, *(pos + (az * z_step)));
+                else
+                  pack_tsdf(0.f, 0, *(pos + (az * z_step)));
+              }
+            }
+        }
+      }
+
+      template<typename T>
+      __global__ void
       clearSliceKernel (PtrStep<T> volume, pcl::gpu::kinfuLS::tsdf_buffer buffer, int3 minBounds, int3 maxBounds)
       {
         int x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -250,6 +297,22 @@ namespace pcl
         grid.y = divUp (voxels_size.y, block.y);
 
         clearBBoxKernel<<<grid, block>>>(volume,voxels_size,origin,m,M,set_to_empty);
+        cudaSafeCall ( cudaGetLastError () );
+        cudaSafeCall (cudaDeviceSynchronize ());
+      }
+
+      void
+      clearCylinder(PtrStep<short2> volume, const int3 voxels_size, const int3& origin,
+                    float3 cylinder_center, float3 height_bearing,
+                    float radius, float half_height, bool set_to_empty)
+      {
+        dim3 block (32, 16);
+        dim3 grid (1, 1, 1);
+        grid.x = divUp (voxels_size.x, block.x);
+        grid.y = divUp (voxels_size.y, block.y);
+
+        clearCylinderKernel<<<grid, block>>>(volume,voxels_size,origin,cylinder_center,height_bearing,
+                                             radius,half_height,set_to_empty);
         cudaSafeCall ( cudaGetLastError () );
         cudaSafeCall (cudaDeviceSynchronize ());
       }
@@ -674,6 +737,96 @@ namespace pcl
       }      // __global__
 
       __global__ void
+      tsdf23_only_empty (const PtrStepSz<float> depthScaled, PtrStep<short2> volume,
+                         const float tranc_dist, const Mat33 Rcurr_inv, const float3 tcurr,
+                         const Intr intr, const float3 cell_size, const pcl::gpu::kinfuLS::tsdf_buffer buffer)
+      {
+        int x = threadIdx.x + blockIdx.x * blockDim.x;
+        int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+        if (x >= buffer.voxels_size.x - buffer.voxels_volume_padding.x ||
+            y >= buffer.voxels_size.y - buffer.voxels_volume_padding.y)
+          return;
+        if (x < buffer.voxels_volume_padding.x || y < buffer.voxels_volume_padding.y)
+          return;
+
+        float v_g_x = (x + 0.5f) * cell_size.x - tcurr.x;
+        float v_g_y = (y + 0.5f) * cell_size.y - tcurr.y;
+        float v_g_z = (0 + 0.5f) * cell_size.z - tcurr.z;
+
+        float v_g_part_norm = v_g_x * v_g_x + v_g_y * v_g_y;
+
+        float v_x = (Rcurr_inv.data[0].x * v_g_x + Rcurr_inv.data[0].y * v_g_y + Rcurr_inv.data[0].z * v_g_z) * intr.fx;
+        float v_y = (Rcurr_inv.data[1].x * v_g_x + Rcurr_inv.data[1].y * v_g_y + Rcurr_inv.data[1].z * v_g_z) * intr.fy;
+        float v_z = (Rcurr_inv.data[2].x * v_g_x + Rcurr_inv.data[2].y * v_g_y + Rcurr_inv.data[2].z * v_g_z);
+
+        float z_scaled = 0;
+
+        float Rcurr_inv_0_z_scaled = Rcurr_inv.data[0].z * cell_size.z * intr.fx;
+        float Rcurr_inv_1_z_scaled = Rcurr_inv.data[1].z * cell_size.z * intr.fy;
+
+        int idX = x + buffer.origin_GRID.x;
+        if (idX >= buffer.voxels_size.x)
+          idX -= buffer.voxels_size.x;
+
+        int idY = y + buffer.origin_GRID.y;
+        if (idY >= buffer.voxels_size.y)
+          idY -= buffer.voxels_size.y;
+
+  //#pragma unroll
+        for (int z = buffer.voxels_volume_padding.z; z < buffer.voxels_size.z - buffer.voxels_volume_padding.z;
+            ++z,
+            v_g_z += cell_size.z,
+            z_scaled += cell_size.z,
+            v_x += Rcurr_inv_0_z_scaled,
+            v_y += Rcurr_inv_1_z_scaled)
+        {
+
+          // As the pointer is incremented in the for loop, we have to make sure that the pointer is never outside the memory
+          int idZ = z + buffer.origin_GRID.z;
+          if (idZ >= buffer.voxels_size.z)
+            idZ -= buffer.voxels_size.z;
+
+          short2* pos = volume.ptr (buffer.voxels_size.y * idZ + idY) + idX;
+
+          float inv_z = 1.0f / (v_z + Rcurr_inv.data[2].z * z_scaled);
+          if (inv_z < 0)
+              continue;
+
+          // project to current cam
+          int2 coo =
+          {
+            __float2int_rn (v_x * inv_z + intr.cx),
+            __float2int_rn (v_y * inv_z + intr.cy)
+          };
+
+          if (coo.x >= 0 && coo.y >= 0 && coo.x < depthScaled.cols && coo.y < depthScaled.rows)         //6
+          {
+            float Dp_scaled = depthScaled.ptr (coo.y)[coo.x]; //meters
+
+            float sdf = Dp_scaled - sqrtf (v_g_z * v_g_z + v_g_part_norm);
+
+            if (Dp_scaled != 0 && sdf >= tranc_dist) //meters
+            {
+              float tsdf = 1.0f;
+
+              //read and unpack
+              float tsdf_prev;
+              int weight_prev;
+              unpack_tsdf (*pos, tsdf_prev, weight_prev);
+
+              const int Wrk = 1;
+
+              float tsdf_new = (tsdf_prev * weight_prev + Wrk * tsdf) / (weight_prev + Wrk);
+              int weight_new = min (weight_prev + Wrk, Tsdf::MAX_WEIGHT);
+
+              pack_tsdf (tsdf_new, weight_new, *pos);
+            }
+          }
+        }       // for(int z = 0; z < VOLUME_Z; ++z)
+      }      // __global__
+
+      __global__ void
       tsdf23normal_hack (const PtrStepSz<float> depthScaled, PtrStep<short2> volume,
                     const float tranc_dist, const Mat33 Rcurr_inv, const float3 tcurr, const Intr intr, const float3 cell_size)
       {
@@ -820,6 +973,39 @@ namespace pcl
         dim3 grid (divUp (buffer->voxels_size.x, block.x), divUp (buffer->voxels_size.y, block.y));
 
         tsdf23<<<grid, block>>>(depthScaled, volume, tranc_dist, Rcurr_inv, tcurr, intr, cell_size, *buffer);    
+        //tsdf23normal_hack<<<grid, block>>>(depthScaled, volume, tranc_dist, Rcurr_inv, tcurr, intr, cell_size);
+
+        cudaSafeCall ( cudaGetLastError () );
+        cudaSafeCall (cudaDeviceSynchronize ());
+      }
+
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      void
+      integrateTsdfVolumeOnlyEmpty (const PtrStepSz<ushort>& depth, const Intr& intr,
+                                    const float3& volume_size, const Mat33& Rcurr_inv, const float3& tcurr,
+                                    float tranc_dist,
+                                    PtrStep<short2> volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                                    DeviceArray2D<float>& depthScaled)
+      {
+        depthScaled.create (depth.rows, depth.cols);
+
+        dim3 block_scale (32, 8);
+        dim3 grid_scale (divUp (depth.cols, block_scale.x), divUp (depth.rows, block_scale.y));
+
+        //scales depth along ray and converts mm -> meters.
+        scaleDepth<<<grid_scale, block_scale>>>(depth, depthScaled, intr);
+        cudaSafeCall ( cudaGetLastError () );
+
+        float3 cell_size;
+        cell_size.x = volume_size.x / buffer->voxels_size.x;
+        cell_size.y = volume_size.y / buffer->voxels_size.y;
+        cell_size.z = volume_size.z / buffer->voxels_size.z;
+
+        //dim3 block(Tsdf::CTA_SIZE_X, Tsdf::CTA_SIZE_Y);
+        dim3 block (16, 16);
+        dim3 grid (divUp (buffer->voxels_size.x, block.x), divUp (buffer->voxels_size.y, block.y));
+
+        tsdf23_only_empty<<<grid, block>>>(depthScaled, volume, tranc_dist, Rcurr_inv, tcurr, intr, cell_size, *buffer);
         //tsdf23normal_hack<<<grid, block>>>(depthScaled, volume, tranc_dist, Rcurr_inv, tcurr, intr, cell_size);
 
         cudaSafeCall ( cudaGetLastError () );

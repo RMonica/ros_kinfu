@@ -85,6 +85,8 @@ pcl::gpu::kinfuLS::KinfuTracker::KinfuTracker (const Eigen::Vector3f &volume_siz
   volume_size_ = volume_size.x();
   voxels_size_ = volume_resolution.x();
 
+  target_point_distance_ = volume_size_ * 0.6;
+
   tsdf_volume_ = TsdfVolume::Ptr ( new TsdfVolume(volume_resolution) );
   tsdf_volume_->setSize (volume_size);
   
@@ -173,6 +175,12 @@ pcl::gpu::kinfuLS::KinfuTracker::setTSDFPadding(const int padding)
   cyclical_.setPadding(padding);
 }
 
+void
+pcl::gpu::kinfuLS::KinfuTracker::setDistanceCameraTarget(const float distance)
+{
+  target_point_distance_ = distance;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 int
 pcl::gpu::kinfuLS::KinfuTracker::cols ()
@@ -203,7 +211,7 @@ pcl::gpu::kinfuLS::KinfuTracker::extractAndSaveWorld ()
   
   //extract current volume to world model
   PCL_INFO("Extracting current volume...");
-  cyclical_.checkForShift(tsdf_volume_, getCameraPose (), 0.6 * volume_size_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
+  cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
   PCL_INFO("Done\n");
   
   finished_ = true; // TODO maybe we could add a bool param to prevent kinfuLS from exiting after we saved the current world model
@@ -230,7 +238,7 @@ void pcl::gpu::kinfuLS::KinfuTracker::syncKnownPoints()
   {
   //extract current volume
   if (!just_shifted_)
-    cyclical_.checkForShift(tsdf_volume_, getCameraPose (), 0.6 * volume_size_, cyclical_.getDistanceThreshold(), true, true, true);
+    cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true);
   else
     PCL_INFO("checkForShift skipped: already done.\n");
     // this will force the extraction of the whole cube.
@@ -242,7 +250,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr pcl::gpu::kinfuLS::KinfuTracker::extractWor
   //extract current volume to world model
   PCL_INFO("Extracting current volume...");
   if (!just_shifted_)
-    cyclical_.checkForShift(tsdf_volume_, getCameraPose (), 0.6 * volume_size_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
+    cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
   else
     PCL_INFO("checkForShift skipped: already done.");
   just_shifted_ = true;
@@ -258,7 +266,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr pcl::gpu::kinfuLS::KinfuTracker::extractWor
 {
   //extract current volume to world model
   PCL_INFO("Extracting current volume...");
-  cyclical_.checkForShift(tsdf_volume_, getCameraPose (), 0.6 * volume_size_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
+  cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
   PCL_INFO("Done\n");
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr result =
@@ -344,6 +352,41 @@ pcl::gpu::kinfuLS::KinfuTracker::clearSphere(const Eigen::Vector3f & center,floa
   // a sphere must be cleared in the downloaded world model
   // this also updates the knowledge octree
   cyclical_.clearSphere(expanded_center,expanded_radius,set_to_empty);
+
+  just_shifted_ = false;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void
+pcl::gpu::kinfuLS::KinfuTracker::clearCylinder(const Eigen::Vector3f & b_min,const Eigen::Vector3f & b_max,
+                                               const float radius,const bool set_to_empty)
+{
+  Eigen::Vector3i shift;
+  shift.x() = cyclical_.getBuffer()->origin_GRID.x;
+  shift.y() = cyclical_.getBuffer()->origin_GRID.y;
+  shift.z() = cyclical_.getBuffer()->origin_GRID.z;
+
+  const Eigen::Vector3f center = (b_min + b_max) / 2.0f;
+  const Eigen::Vector3f height_bearing = (b_max - b_min).normalized();
+  const float half_height = (b_min - b_max).norm() / 2.0f;
+  Eigen::Vector3f translated_center = center;
+  translated_center.x() -= cyclical_.getBuffer()->origin_metric.x;
+  translated_center.y() -= cyclical_.getBuffer()->origin_metric.y;
+  translated_center.z() -= cyclical_.getBuffer()->origin_metric.z;
+
+  const Eigen::Vector3f expanded_center = center * voxels_size_ / volume_size_;
+  const Eigen::Vector3f expanded_translated_center = translated_center * voxels_size_ / volume_size_;
+  const float expanded_half_height = half_height * voxels_size_ / volume_size_;
+  const float expanded_radius = radius * voxels_size_ / volume_size_;
+
+  // a cylinder must be cleared in the TSDF volume
+  tsdf_volume_->clearCylinder(shift,expanded_translated_center,height_bearing,
+                              expanded_radius,expanded_half_height,set_to_empty);
+
+  // a cylinder must be cleared in the downloaded world model
+  // this also updates the knowledge octree
+  cyclical_.clearCylinder(expanded_center,height_bearing,expanded_radius,expanded_half_height,
+                          set_to_empty);
 
   just_shifted_ = false;
 }
@@ -829,7 +872,7 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
 
   ///////////////////////////////////////////////////////////////////////////////////////////  
   // check if we need to shift
-  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, getCameraPose (), 0.6 * volume_size_, cyclical_.getDistanceThreshold(), true, perform_last_scan_); // TODO make target distance from camera a param
+  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, perform_last_scan_); // TODO make target distance from camera a param
   if(has_shifted_)
     PCL_WARN ("SHIFTING\n");
   
@@ -886,6 +929,23 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
   // save current vertex and normal maps
   saveCurrentMaps ();
   return (true);
+}
+
+void pcl::gpu::kinfuLS::KinfuTracker::IntegrateEmptyMap(const DepthMap& depth_raw)
+{
+  Intr intr (fx_, fy_, cx_, cy_);
+  float3 device_volume_size = device_cast<const float3> (tsdf_volume_->getSize());
+
+  Mat33  device_current_rotation_inv;
+  float3 device_current_translation_local;
+  Matrix3frm rot_inv = last_estimated_rotation_.inverse();
+  device_current_rotation_inv = device_cast<Mat33>(rot_inv);
+  device_current_translation_local = device_cast<float3>(last_estimated_translation_);
+  device_current_translation_local -= getCyclicalBufferStructure()->origin_metric;
+
+  integrateTsdfVolumeOnlyEmpty (depth_raw, intr, device_volume_size, device_current_rotation_inv,
+                       device_current_translation_local, tsdf_volume_->getTsdfTruncDist (),
+                       tsdf_volume_->data (), getCyclicalBufferStructure (), depthEmptyRawScaled_);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

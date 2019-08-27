@@ -159,6 +159,10 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         void
         clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
 
+        void
+        clearCylinder(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,const Eigen::Vector3f & height_bearing,
+                      float radius,float half_height,bool set_to_empty);
+
         /** \brief Generates cloud using CPU (downloads volumetric representation to CPU memory)
           * \param[out] cloud output array for cloud
           * \param[in] connected26 If false point cloud is extracted using 6 neighbor, otherwise 26.

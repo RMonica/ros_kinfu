@@ -89,6 +89,10 @@ namespace pcl
         void
         setIntrinsics(float fx = 525.f, float fy = 525.f, float cx = -1, float cy = -1);
 
+        /** \brief Gets camera intrinsics */
+        void
+        getIntrinsics(float & fx, float & fy, float & cx, float & cy) const;
+
         /** \brief Sets bounding box */
         void
         setBoundingBox(const Eigen::Vector3f & bbox_min,const Eigen::Vector3f & bbox_max)
@@ -119,6 +123,10 @@ namespace pcl
 
         void setWithVoxelIds(const bool wv)
           {with_voxel_ids_ = wv; }
+
+        /** \brief it true, skips unknown voxels outside the sphere or bounding box filter */
+        void setSkipUnknownOutsideFilter(const bool skip)
+          {skip_unknown_outside_filter_ = skip; }
 
         /** \brief set raycast step (-1 for default) */
         void
@@ -205,6 +213,7 @@ namespace pcl
         Eigen::Vector3f bbox_min_;
         Eigen::Vector3f bbox_max_;
 
+        bool skip_unknown_outside_filter_;
         struct FilterData
         {
           bool has_bbox;

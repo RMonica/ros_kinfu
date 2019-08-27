@@ -23,13 +23,17 @@ KinfuCloudPoint bounding_box_min
 KinfuCloudPoint bounding_box_max
 
 # if true, only points inside this sphere will be used
-# for now, implemented only for REQUEST_TYPE_GET_VOXEL_COUNT
 bool request_sphere
 KinfuCloudPoint sphere_center
 float32 sphere_radius
 
+# If true, for REQUEST_TYPE_GET_VIEW_CLOUD and REQUEST_TYPE_GET_VOXEL_COUNT,
+# unknown voxels outside the filter (request_bounding_boxand/or request_sphere)
+# do not stop cast rays. Occupied voxels still stop them.
+# Useful not to count unknown voxels which are between the simulated sensor and the target.
+bool skip_unknown_outside_filter
+
 # if true, the resulting point cloud will be subsampled
-# currently implemented only for REQUEST_TYPE_GET_KNOWN
 bool request_subsample
 float32 subsample_voxel_size
 
@@ -41,6 +45,11 @@ float32 shift_distance_threshold
 # for REQUEST_TYPE_GET_VIEW, REQUEST_TYPE_GET_VIEW_CLOUD, REQUEST_TYPE_GET_VOXEL_COUNT
 bool request_camera_intrinsics
 KinfuCameraIntrinsics camera_intrinsics
+
+# removes emitter shadow when ray casting, for 
+# REQUEST_TYPE_GET_VIEW, REQUEST_TYPE_GET_VIEW_CLOUD, REQUEST_TYPE_GET_VOXEL_COUNT
+bool request_emitter_shadow_removal
+float32 distance_x_camera_emitter # positive if the emitter is on the right of the IR camera
 
 bool request_view_poses
 KinfuPose[] view_poses

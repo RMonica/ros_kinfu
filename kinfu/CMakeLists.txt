@@ -8,7 +8,6 @@ endif()
 
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
-  cmake_modules
   image_transport
   kinfu_msgs
   message_filters
@@ -25,7 +24,7 @@ find_package(
   )
 
 find_package(
-  Eigen REQUIRED
+  Eigen3 REQUIRED
   )
 
 set(KINFUTRIGGER_FILE "cmake/KinfuTrigger.cmake")
@@ -78,7 +77,7 @@ if (${KINFU_CONFIGURED})
     src/kinfu_output_action_manager.cpp
     )
 
-  add_dependencies(kinfu kinfu_msgs_generate_messages_cpp)
+  add_dependencies(kinfu ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
   target_link_libraries(kinfu
     boost_system boost_signals

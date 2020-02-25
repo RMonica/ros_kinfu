@@ -30,8 +30,9 @@
 
 #include "kinfu_output_action_manager.h"
 
-RequestActionManager::RequestActionManager(ros::NodeHandle & nh,KinfuOutputIAnswerer & answerer):
-  m_nh(nh), m_answerer(answerer)
+RequestActionManager::RequestActionManager(ros::NodeHandle & nh, KinfuOutputIAnswerer & answerer,
+                                           KinfuOutputSaveFile &save_file):
+  m_nh(nh), m_answerer(answerer), m_save_file(save_file)
   {
   std::string temp_string;
   m_nh.param<std::string>(PARAM_NAME_REQUEST_ACTION_NAME,temp_string,PARAM_DEFAULT_REQUEST_ACTION_NAME);
@@ -70,7 +71,7 @@ void RequestActionManager::onNewGoal(GoalHandle goal_handle)
   m_answerer.requestCallback(request_msg);
   }
 
-bool RequestActionManager::HandleResponse(const kinfu_msgs::RequestResult & resp)
+bool RequestActionManager::HandleResponse(kinfu_msgs::RequestResult & resp)
   {
   boost::mutex::scoped_lock lock(m_mutex);
 
@@ -85,16 +86,29 @@ bool RequestActionManager::HandleResponse(const kinfu_msgs::RequestResult & resp
     return true;
     }
 
-  for (TGoalHandleList::iterator goal_i = m_active_goals.begin(); goal_i != m_active_goals.end(); ++goal_i)
+  TGoalHandleList::iterator goal_i = m_active_goals.begin();
+  for (goal_i = m_active_goals.begin(); goal_i != m_active_goals.end(); ++goal_i)
     if (goal_i->getGoalID().id == rel_i->second.id)
-      {
-      if (goal_i->getGoalStatus().status == actionlib_msgs::GoalStatus().ACTIVE)
-        {
-        ROS_INFO("kinfu_output: result sent for id %u",id);
-        goal_i->setSucceeded(resp);
-        }
       break;
+
+  if (m_save_file.IsLargeResponse(resp))
+    {
+    ROS_WARN("kinfu_output: response for action with id %u is too large, saving to file.", unsigned(id));
+    const std::string filename = m_save_file.SaveFile(resp);
+    if (filename.empty())
+      {
+      ROS_ERROR("kinfu_output: could not save file, action %u failed.", unsigned(id));
+      goal_i->setAborted(resp);
+      return true;
       }
+    resp.file_name = filename;
+    }
+
+  if (goal_i->getGoalStatus().status == actionlib_msgs::GoalStatus().ACTIVE)
+    {
+    ROS_INFO("kinfu_output: result sent for id %u", unsigned(id));
+    goal_i->setSucceeded(resp);
+    }
 
   return true;
   }

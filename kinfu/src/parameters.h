@@ -44,6 +44,10 @@
 #define PARAM_NAME_IMAGE_TOPIC            "image_topic"
 #define PARAM_DEFAULT_IMAGE_TOPIC         "/rgb/image_color"
 
+// whenever a frame is processed, a std_msgs/Empty is sent here
+#define PARAM_NAME_IMAGE_ACK_TOPIC        "image_ack_topic"
+#define PARAM_DEFAULT_IMAGE_ACK_TOPIC     "image_ack"
+
 #define PARAM_NAME_IN_RESET_TOPIC        "require_reset_topic"
 #define PARAM_DEFAULT_IN_RESET_TOPIC     "/kinfu_require_reset_topic"
 
@@ -72,10 +76,16 @@
 #define PARAM_DEFAULT_VOLUME_SIZE         (double(3.0))
 
 #define PARAM_NAME_TARGET_POINT_DISTANCE  "target_point_distance"
-// default: volume_size / 3
+// default: 2 * volume_size / 3
 
 #define PARAM_NAME_VOLUME_RESOLUTION      "volume_resolution"
 #define PARAM_DEFAULT_VOLUME_RESOLUTION   (int(512))
+
+// "thickness" of the occupied surface
+// should be greater than one cell size
+// if zero, (volume_size/volume_resolution)*5.12 will be used
+#define PARAM_NAME_TRUNC_DIST             "trunc_dist"
+#define PARAM_DEFAULT_TRUNC_DIST          (double(0.0))
 
 #define PARAM_NAME_SHIFT_DISTANCE         "shift_distance"
 #define PARAM_SNAME_SHIFT_DISTANCE        "sd"

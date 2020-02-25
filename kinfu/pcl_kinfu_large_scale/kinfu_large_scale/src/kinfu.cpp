@@ -99,7 +99,7 @@ pcl::gpu::kinfuLS::KinfuTracker::KinfuTracker (const Eigen::Vector3f &volume_siz
   setDepthIntrinsics (FOCAL_LENGTH, FOCAL_LENGTH); // default values, can be overwritten
   
   init_Rcam_ = Eigen::Matrix3f::Identity ();// * AngleAxisf(-30.f/180*3.1415926, Vector3f::UnitX());
-  init_tcam_ = volume_size * 0.5f - Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
+  init_tcam_ = volume_size * 0.5f - Vector3f (0, 0, target_point_distance_);
 
   const int iters[] = {10, 5, 4};
   std::copy (iters, iters + LEVELS, icp_iterations_);
@@ -121,8 +121,8 @@ pcl::gpu::kinfuLS::KinfuTracker::KinfuTracker (const Eigen::Vector3f &volume_siz
   // initialize cyclical buffer
   cyclical_.initBuffer(tsdf_volume_);
   
-  last_estimated_rotation_= Eigen::Matrix3f::Identity ();
-  last_estimated_translation_= volume_size * 0.5f - Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
+  last_estimated_rotation_ = Eigen::Matrix3f::Identity ();
+  last_estimated_translation_ = init_tcam_;
 
   just_shifted_ = false;
 }

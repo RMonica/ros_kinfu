@@ -247,6 +247,14 @@ void RequestManager::SendResponse(const kinfu_msgs::RequestResultPtr & response_
   if (m_ramgr->HandleResponse(response))
     return; // request was an action
 
+  if (m_save_file.IsLargeResponse(response))
+  {
+    ROS_ERROR("kinfu_output: response for request with id %u is too large, saving to file.",
+              unsigned(response.tsdf_header.request_id));
+    m_save_file.SaveFile(response);
+    ROS_ERROR("kinfu_output: no output generated.");
+  }
+
   if (response.tsdf_header.request_type == response.tsdf_header.REQUEST_TYPE_PING)
   {
     m_queue.push_back(PQueuedResponse(new TQueuedPingResponse(m_nh,response)));
@@ -326,7 +334,8 @@ void RequestManager::requestCallback(const kinfu_msgs::KinfuTsdfRequestConstPtr 
   m_answerer.requestCallback(request);
 }
 
-RequestManager::RequestManager(ros::NodeHandle & nh,KinfuOutputIAnswerer & answerer): m_nh(nh), m_answerer(answerer)
+RequestManager::RequestManager(ros::NodeHandle & nh,KinfuOutputIAnswerer & answerer):
+  m_nh(nh), m_answerer(answerer), m_save_file(nh)
 {
   boost::mutex::scoped_lock lock(m_mutex);
   std::string param_string;
@@ -334,7 +343,7 @@ RequestManager::RequestManager(ros::NodeHandle & nh,KinfuOutputIAnswerer & answe
   m_nh.param<std::string>(PARAM_NAME_REQUEST_TOPIC,param_string,PARAM_DEFAULT_REQUEST_TOPIC);
   m_req_sub = m_nh.subscribe(param_string, 10,&RequestManager::requestCallback,this);
 
-  m_ramgr = RequestActionManagerPtr(new RequestActionManager(m_nh,m_answerer));
+  m_ramgr = RequestActionManagerPtr(new RequestActionManager(m_nh,m_answerer,m_save_file));
 
   m_is_terminating = false;
   m_update_thread = boost::thread(&RequestManager::run,this);

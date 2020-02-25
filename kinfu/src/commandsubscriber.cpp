@@ -224,6 +224,8 @@ void CommandSubscriber::commandCallback(const kinfu_msgs::KinfuCommand & cmd)
       m_hint_forced = cmd.hint_forced;
       }
     }
+
+  m_cond.notify_all();
   }
 
 bool CommandSubscriber::hasHint() const

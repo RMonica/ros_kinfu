@@ -42,6 +42,7 @@
 // custom
 #include "parameters.h"
 #include "kinfu_output_ianswerer.h"
+#include "kinfu_output_save_file.h"
 
 // Boost
 #include <boost/shared_ptr.hpp>
@@ -66,12 +67,13 @@ class RequestActionManager
   typedef typename std::map<uint,TGoalID> TGoalIDUintMap;
   typedef typename std::pair<uint,TGoalID> TGoalIDUintPair;
 
-  RequestActionManager(ros::NodeHandle & nh,KinfuOutputIAnswerer & answerer);
+  RequestActionManager(ros::NodeHandle & nh, KinfuOutputIAnswerer & answerer,
+                       KinfuOutputSaveFile & save_file);
 
   void Update();
 
   // returns true if the response is handled
-  bool HandleResponse(const kinfu_msgs::RequestResult & resp);
+  bool HandleResponse(kinfu_msgs::RequestResult & resp);
 
   private:
   void onNewGoal(GoalHandle goal_handle);
@@ -87,6 +89,8 @@ class RequestActionManager
   uint m_next_id;
 
   KinfuOutputIAnswerer & m_answerer;
+
+  KinfuOutputSaveFile & m_save_file;
 
   std::string m_request_magic;
   };

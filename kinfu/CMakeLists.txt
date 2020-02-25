@@ -75,6 +75,7 @@ if (${KINFU_CONFIGURED})
 
     src/kinfu_output_request_manager.cpp
     src/kinfu_output_action_manager.cpp
+    src/kinfu_output_save_file.cpp
     )
 
   add_dependencies(kinfu ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})

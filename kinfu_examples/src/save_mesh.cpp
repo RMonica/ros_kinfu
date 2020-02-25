@@ -18,6 +18,8 @@
 #include <pcl/PolygonMesh.h>
 #include <pcl/io/ply_io.h>
 
+#include <cstdio>
+
 #define FILENAME "mesh.ply"
 
 int main(int argc,char ** argv)
@@ -45,11 +47,24 @@ int main(int argc,char ** argv)
   }
   ROS_INFO("Action succeeded.");
 
-  ROS_INFO("Saving mesh to '%s'...",FILENAME);
-  kinfu_msgs::RequestResultConstPtr result = action_client.getResult();
-  const pcl_msgs::PolygonMesh & mesh_msg = result->mesh;
   pcl::PolygonMesh mesh;
-  pcl_conversions::toPCL(mesh_msg,mesh);
+  kinfu_msgs::RequestResultConstPtr result = action_client.getResult();
+  // check if the mesh was too large, and it was saved to file
+  if (!result->file_name.empty())
+  {
+    ROS_INFO("Loading mesh from file '%s'...",result->file_name.c_str());
+    pcl::io::loadPLYFile(result->file_name,mesh);
+    std::remove(result->file_name.c_str()); // cleanup
+  }
+  else
+  {
+    // else, get the mesh from the message
+    ROS_INFO("Extracting mesh from message...");
+    const pcl_msgs::PolygonMesh & mesh_msg = result->mesh;
+    pcl_conversions::toPCL(mesh_msg,mesh);
+  }
+
+  ROS_INFO("Saving mesh to '%s'...",FILENAME);
   if (pcl::io::savePLYFileBinary(FILENAME,mesh))
   {
     ROS_ERROR("Mesh could not be saved.");

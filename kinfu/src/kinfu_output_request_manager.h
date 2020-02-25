@@ -56,6 +56,7 @@
 // custom
 #include "parameters.h"
 #include "kinfu_output_ianswerer.h"
+#include "kinfu_output_save_file.h"
 
 class RequestActionManager;
 
@@ -89,6 +90,8 @@ class RequestManager
 
   ros::Subscriber m_req_sub;
   KinfuOutputIAnswerer & m_answerer;
+
+  KinfuOutputSaveFile m_save_file;
 
   boost::mutex m_mutex;
   boost::thread m_update_thread;

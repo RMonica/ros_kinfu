@@ -295,6 +295,8 @@ class ImageSubscriber
   ImageSubscriber(ros::NodeHandle &nhandle,boost::mutex & shared_mutex,boost::condition_variable & cond): 
     m_shared_mutex(shared_mutex),m_cond(cond),m_nh(nhandle)
   {
+    std::string param_string;
+
     std::string prefix_topic;
     m_nh.param<std::string>(PARAM_NAME_PREFIX_TOPIC,prefix_topic,PARAM_DEFAULT_PREFIX_TOPIC);
 
@@ -335,6 +337,9 @@ class ImageSubscriber
 
       ROS_INFO("Running KinFu without texture extraction");
     }
+
+    m_nh.param<std::string>(PARAM_NAME_IMAGE_ACK_TOPIC, param_string, PARAM_DEFAULT_IMAGE_ACK_TOPIC);
+    m_ack_pub = m_nh.advertise<std_msgs::Empty>(param_string, 1);
 
     m_has_image = false;
   }
@@ -381,6 +386,11 @@ class ImageSubscriber
     m_has_image = false;
   }
 
+  void ackImage()
+  {
+    m_ack_pub.publish(std_msgs::Empty());
+  }
+
   private:
 
   typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image,
@@ -392,6 +402,8 @@ class ImageSubscriber
   boost::shared_ptr<message_filters::Subscriber<Image> > m_rgb_sub;
   boost::shared_ptr<message_filters::Subscriber<Image> > m_depth_sub;
   boost::shared_ptr<message_filters::Subscriber<CameraInfo> > m_info_sub;
+
+  ros::Publisher m_ack_pub;
 
   sensor_msgs::ImageConstPtr m_rgb;
   sensor_msgs::ImageConstPtr m_depth;
@@ -411,7 +423,7 @@ struct KinFuLSApp
   {
     PCD_BIN = 1, PCD_ASCII = 2, PLY = 3, MESH_PLY = 7, MESH_VTK = 8
   };
-  KinFuLSApp(float vsz, float target_point_distance, const int vr, float shiftDistance,
+  KinFuLSApp(float vsz, float target_point_distance, const int vr, const float trunc_dist, float shiftDistance,
              ros::NodeHandle & nodeHandle, uint depth_height, uint depth_width) :
       scan_(false), scan_mesh_(false), scan_volume_(false), independent_camera_(false),
       registration_(false), integrate_colors_(false), pcd_source_(false), focal_length_(-1.f),
@@ -439,7 +451,7 @@ struct KinFuLSApp
     kinfu_ = new pcl::gpu::kinfuLS::KinfuTracker(volume_size, volume_resolution, shiftDistance, depth_height, depth_width);
     kinfu_->setDistanceCameraTarget(target_point_distance);
     Eigen::Matrix3f R = Eigen::Matrix3f::Identity ();   // * AngleAxisf( pcl::deg2rad(-30.f), Vector3f::UnitX());
-    Eigen::Vector3f t = volume_size * 0.5f - Eigen::Vector3f (0, 0, volume_size (2) / 2 * 1.2f);
+    Eigen::Vector3f t = volume_size * 0.5f - Eigen::Vector3f (0, 0, target_point_distance);
 
     Eigen::Affine3f pose = Eigen::Translation3f (t) * Eigen::AngleAxisf (R);
 
@@ -449,7 +461,7 @@ struct KinFuLSApp
     m_world_download_manager.setReferenceFrameName(m_pose_publisher.getFirstFrameName());
 
     kinfu_->setInitialCameraPose(pose);
-    kinfu_->volume().setTsdfTruncDist(0.030f/*meters*/);
+    kinfu_->volume().setTsdfTruncDist(trunc_dist/*meters*/);
     kinfu_->setIcpCorespFilteringParams(0.1f/*meters*/, sin(pcl::deg2rad(20.f)));
     //kinfu_->setDepthTruncationForICP(3.f/*meters*/);
     kinfu_->setCameraMovementThreshold(0.001f);
@@ -478,74 +490,66 @@ struct KinFuLSApp
 
     while (!m_request_termination)
     {
-      bool reset;
-      std::string reset_command_id;
-      bool hasimage;
-      bool hint_ok = true;
-      bool hasrequests;
-      bool isrunning;
-      bool istriggered;
+      while (!m_request_termination && 
+        !(m_reset_subscriber.isResetRequired()) &&
+        !(m_image_subscriber.hasImage() &&
+          (m_command_subscriber.isTriggered() || m_command_subscriber.isRunning())) &&
+        !(m_world_download_manager.hasRequests()) &&
+        !(m_command_subscriber.hasClearSphere()) &&
+        !(m_command_subscriber.hasClearBBox()) &&
+        !(m_command_subscriber.hasClearCylinder()))
+        m_cond.wait(main_lock);
 
+      const bool hasimage = m_image_subscriber.hasImage();
+      const bool hasrequests = m_world_download_manager.hasRequests();
+
+      const bool istriggered = m_command_subscriber.isTriggered();
+      const bool isrunning = m_command_subscriber.isRunning();
+
+      const bool is_msg_reset_required = m_reset_subscriber.isResetRequired();
+      if (is_msg_reset_required)
+        m_reset_subscriber.clearResetRequired();
+
+      const bool is_command_reset_required = m_command_subscriber.isResetRequired();
+      std::string reset_command_id;
+      if (is_command_reset_required)
+      {
+        reset_command_id = m_command_subscriber.getResetCommandId();
+        m_command_subscriber.clearResetRequired();
+      }
+      const bool reset = is_msg_reset_required || is_command_reset_required;
+
+      bool hint_ok = true;
       KinfuTracker::THint pose_hint;
+
       CommandSubscriber::Sphere::Ptr clear_sphere;
       CommandSubscriber::BBox::Ptr clear_bbox;
       CommandSubscriber::Cylinder::Ptr clear_cylinder;
 
-      while (!m_request_termination && 
-        !(m_reset_subscriber.isResetRequired()) &&
-        !(m_image_subscriber.hasImage()) &&
-        !(m_world_download_manager.hasRequests()) &&
-        !(m_command_subscriber.hasClearSphere()) &&
-        !(m_command_subscriber.hasClearBBox()) &&
-        !(m_command_subscriber.hasClearCylinder()) &&
-        !(m_command_subscriber.isTriggered()))
-        m_cond.wait(main_lock);
-
-      hasimage = m_image_subscriber.hasImage();
-      hasrequests = m_world_download_manager.hasRequests();
-
-      std::string istriggered_command_id;
-      if ((istriggered = m_command_subscriber.isTriggered()))
-        {
-        istriggered_command_id = m_command_subscriber.getIsTriggeredCommandId();
-        m_command_subscriber.clearTriggered();
-        }
-
-      reset = false;
-      if (m_reset_subscriber.isResetRequired())
+      if (m_command_subscriber.hasHint())
       {
-        reset = true;
-        m_reset_subscriber.clearResetRequired();
+        pose_hint.type = m_command_subscriber.hasForcedHint() ?
+          KinfuTracker::THint::HINT_TYPE_FORCED : KinfuTracker::THint::HINT_TYPE_HINT;
+        pose_hint.transform = m_command_subscriber.getHintTransform(hint_ok);
+        m_command_subscriber.clearHint();
       }
 
-      isrunning = m_command_subscriber.isRunning();
+      pose_hint.ignore_minimum_movement = !m_command_subscriber.isEnabledMinimumMovement();
 
-      // command execution is allowed only when a new image is available
-      if (hasimage)
+      const bool can_process_image = hasimage && hint_ok && (istriggered || isrunning);
+
+      std::string istriggered_command_id;
+      if (istriggered && can_process_image)
       {
-        if (m_command_subscriber.isResetRequired())
-        {
-          reset = true;
-          reset_command_id = m_command_subscriber.getResetCommandId();
-          m_command_subscriber.clearResetRequired();
-        }
-
-        if (m_command_subscriber.hasHint())
-        {
-          pose_hint.type = m_command_subscriber.hasForcedHint() ?
-            KinfuTracker::THint::HINT_TYPE_FORCED : KinfuTracker::THint::HINT_TYPE_HINT;
-          pose_hint.transform = m_command_subscriber.getHintTransform(hint_ok);
-          m_command_subscriber.clearHint();
-        }
-
-        pose_hint.ignore_minimum_movement = !m_command_subscriber.isEnabledMinimumMovement();
+        istriggered_command_id = m_command_subscriber.getIsTriggeredCommandId();
+        m_command_subscriber.clearTriggered();
       }
 
       sensor_msgs::ImageConstPtr depth;
       sensor_msgs::CameraInfoConstPtr cameraInfo;
       sensor_msgs::ImageConstPtr rgb;
         
-      if (hasimage)
+      if (can_process_image)
       {
         m_image_subscriber.getImage(depth,cameraInfo,rgb);
         m_image_subscriber.clearImage();
@@ -560,22 +564,24 @@ struct KinFuLSApp
       clear_cylinder = m_command_subscriber.getClearCylinder();
       m_command_subscriber.clearClearCylinder();
 
-      // The information from ROS was copied, this may run along the main thread.
+      // ********** The information from ROS was copied, this may run along the main thread. ********
       main_lock.unlock();
 
       if (reset)
       {
         kinfu_->reset();
-        m_command_subscriber.ack(reset_command_id,true);
+        if (is_command_reset_required)
+          m_command_subscriber.ack(reset_command_id,true);
         ROS_INFO("KinFu was reset.");
       }
 
-      if (hasimage && hint_ok && (isrunning || istriggered))
-        {
+      if (can_process_image)
+      {
         execute(depth,cameraInfo,rgb,pose_hint);
         if (istriggered)
           m_command_subscriber.ack(istriggered_command_id,true);
-        }
+        m_image_subscriber.ackImage();
+      }
 
       if ((clear_sphere || clear_bbox || clear_cylinder || hasrequests) && !kinfu_->isShiftComplete())
       {
@@ -613,7 +619,7 @@ struct KinFuLSApp
       if (hasrequests)
         m_world_download_manager.respond(kinfu_);
 
-      // lock the mutex again, it will be unlocked by the condition variable at the beginning of the loop
+      // ******* lock the mutex again ***********
       main_lock.lock();
     }
   }
@@ -626,7 +632,7 @@ struct KinFuLSApp
     const size_t size = height * width;
     const std::string encoding = depth->encoding;
     const bool is_float32 = encoding == "32FC1";
-    const bool is_uint16 = encoding == "16UC1";
+    const bool is_uint16 = (encoding == "16UC1") || (encoding == "mono16");
     const bool is_bigendian = depth->is_bigendian;
 
     suint * data_ptr;
@@ -946,7 +952,16 @@ int main(int argc, char* argv[])
   double target_point_distance = volume_size * 0.6;
   nh.getParam(PARAM_NAME_TARGET_POINT_DISTANCE,target_point_distance);
 
-  KinFuLSApp app(volume_size, target_point_distance, volume_resolution, shift_distance, nh, depth_height, depth_width);
+  double trunc_dist;
+  nh.param<double>(PARAM_NAME_TRUNC_DIST, trunc_dist, PARAM_DEFAULT_TRUNC_DIST);
+  if (trunc_dist < (volume_size / volume_resolution))
+  {
+    trunc_dist = volume_size / volume_resolution * 5.12;
+    ROS_INFO("kinfu: trunc_dist parameter automatically set to %f", float(trunc_dist));
+  }
+
+  KinFuLSApp app(volume_size, target_point_distance, volume_resolution, trunc_dist,
+                 shift_distance, nh, depth_height, depth_width);
 
   int snapshot_rate = PARAM_DEFAULT_SNAPSHOT_RATE;
   nh.getParam(PARAM_NAME_SNAPSHOT_RATE, snapshot_rate);

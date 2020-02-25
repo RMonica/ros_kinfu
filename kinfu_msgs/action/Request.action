@@ -7,5 +7,11 @@ pcl_msgs/PolygonMesh mesh
 sensor_msgs/Image image
 std_msgs/Float32MultiArray float_values
 std_msgs/UInt64MultiArray uint_values
+
+# if the data is too large for a ROS message
+# a temporary file may be created with the data in it
+# in this case, the response will be empty, and the
+# file name is reported here.
+string file_name
 ---
 

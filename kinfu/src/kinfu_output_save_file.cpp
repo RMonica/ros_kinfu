@@ -39,8 +39,12 @@
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 
+#include "parameters.h"
+
 KinfuOutputSaveFile::KinfuOutputSaveFile(ros::NodeHandle & nh): m_nh(nh)
-{ }
+{
+  m_nh.param<std::string>(PARAM_NAME_TEMPORARY_FILE_DIR, m_temp_file_dir, PARAM_DEFAULT_TEMPORARY_FILE_DIR);
+}
 
 bool KinfuOutputSaveFile::IsLargeResponse(const kinfu_msgs::RequestResult & response) const
 {
@@ -53,8 +57,20 @@ std::string KinfuOutputSaveFile::SaveFile(kinfu_msgs::RequestResult & response)
 {
   bool pointcloud = false;
   bool mesh = false;
+  bool float_values = false;
 
-  std::string filename = std::tmpnam(NULL);
+  std::string filename;
+
+  if (!m_temp_file_dir.empty())
+  {
+    char * c_filename = tempnam(m_temp_file_dir.c_str(), NULL);
+    filename = c_filename;
+    free(c_filename);
+  }
+  else
+  {
+    filename = std::tmpnam(NULL);
+  }
 
   switch (response.tsdf_header.request_type)
   {
@@ -71,6 +87,10 @@ std::string KinfuOutputSaveFile::SaveFile(kinfu_msgs::RequestResult & response)
     case kinfu_msgs::KinfuRequestHeader::REQUEST_TYPE_GET_MESH:
       mesh = true;
       filename += ".ply";
+      break;
+    case kinfu_msgs::KinfuRequestHeader::REQUEST_TYPE_GET_VOXELGRID:
+      float_values = true;
+      filename += ".dat";
       break;
     default:
       ROS_ERROR("kinfu_output: could not save file for response type %u.",uint(response.tsdf_header.request_type));
@@ -111,6 +131,22 @@ std::string KinfuOutputSaveFile::SaveFile(kinfu_msgs::RequestResult & response)
     }
 
     response.mesh = pcl_msgs::PolygonMesh();
+  }
+
+  if (float_values)
+  {
+    ROS_INFO("kinfu_output: saving file %s", filename.c_str());
+    std::ofstream ofile(filename.c_str(), std::ios::binary);
+    ofile.write((const char *)(response.float_values.data.data()), response.float_values.data.size() *
+                sizeof(float));
+
+    if (!ofile)
+    {
+      ROS_ERROR("kinfu_output: could not save file.");
+      return "";
+    }
+
+    response.float_values.data.clear();
   }
 
   return filename;

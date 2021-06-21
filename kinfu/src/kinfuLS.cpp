@@ -92,6 +92,8 @@
 #include "commandsubscriber.h"
 #include "weightcubelistener.h"
 #include "incompletepointslistener.h"
+#include "kinfu_shift_checker.h"
+#include "world_upload.h"
 
 // ROS custom messages
 #include <kinfu_msgs/KinfuTsdfRequest.h>
@@ -431,7 +433,8 @@ struct KinFuLSApp
       m_command_subscriber(nodeHandle,m_tf_listener,m_mutex,m_cond),
       m_image_publisher(nodeHandle), m_pose_publisher(nodeHandle), m_icp_is_lost_publisher(nodeHandle),
       m_world_download_manager(nodeHandle,m_mutex,m_cond),
-      time_ms_(0), nh(nodeHandle)
+      time_ms_(0), nh(nodeHandle),
+      m_world_upload_manager(nodeHandle, m_mutex, m_cond)
   {
     //Init Kinfu Tracker
     Eigen::Vector3f volume_size = Eigen::Vector3f::Constant(vsz/*meters*/);
@@ -458,6 +461,7 @@ struct KinFuLSApp
     m_pose_publisher.setReverseInitialTransformation(pose.inverse());
     m_world_download_manager.setReverseInitialTransformation(pose.inverse());
     m_command_subscriber.setInitialTransformation(pose);
+    m_world_upload_manager.SetInitialTransformation(pose);
     m_world_download_manager.setReferenceFrameName(m_pose_publisher.getFirstFrameName());
 
     kinfu_->setInitialCameraPose(pose);
@@ -495,6 +499,7 @@ struct KinFuLSApp
         !(m_image_subscriber.hasImage() &&
           (m_command_subscriber.isTriggered() || m_command_subscriber.isRunning())) &&
         !(m_world_download_manager.hasRequests()) &&
+        !(m_world_upload_manager.IsActionWaiting()) &&
         !(m_command_subscriber.hasClearSphere()) &&
         !(m_command_subscriber.hasClearBBox()) &&
         !(m_command_subscriber.hasClearCylinder()))
@@ -505,6 +510,8 @@ struct KinFuLSApp
 
       const bool istriggered = m_command_subscriber.isTriggered();
       const bool isrunning = m_command_subscriber.isRunning();
+
+      const bool has_world_upload = m_world_upload_manager.IsActionWaiting();
 
       const bool is_msg_reset_required = m_reset_subscriber.isResetRequired();
       if (is_msg_reset_required)
@@ -573,6 +580,11 @@ struct KinFuLSApp
         if (is_command_reset_required)
           m_command_subscriber.ack(reset_command_id,true);
         ROS_INFO("KinFu was reset.");
+      }
+
+      if (has_world_upload)
+      {
+        m_world_upload_manager.Execute(kinfu_);
       }
 
       if (can_process_image)
@@ -771,7 +783,7 @@ struct KinFuLSApp
   {
     boost::mutex::scoped_lock lock(m_mutex);
     m_request_termination = true;
-    m_cond.notify_one();
+    m_cond.notify_all();
   }
 
   void join()
@@ -839,6 +851,8 @@ struct KinFuLSApp
   void SetDepthWidth(const uint w) { m_depth_width = w; }
   void SetDepthHeight(const uint h) { m_depth_height = h; }
 
+  void SetShiftChecker(const KinfuTracker::IShiftChecker::Ptr checker) {kinfu_->setShiftChecker(checker); }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   private:
@@ -896,6 +910,8 @@ struct KinFuLSApp
 
   boost::mutex m_mutex;
   boost::condition_variable m_cond;
+
+  WorldUploadManager m_world_upload_manager;
 };
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -927,6 +943,7 @@ int main(int argc, char* argv[])
   ros::NodeHandle nh("~");
 
   bool param_bool;
+  std::string param_string;
 
   // assign value from parameter server, with default.
   int device;
@@ -1001,6 +1018,13 @@ int main(int argc, char* argv[])
   nh.getParam(PARAM_NAME_MARCHING_CUBE_SIZE,marching_cubes_volume_size);
   if (marching_cubes_volume_size > 0)
     app.setMarchingCubesVolumeSize(marching_cubes_volume_size);
+
+  nh.param<std::string>(PARAM_NAME_SHIFT_CHECKER, param_string, PARAM_DEFAULT_SHIFT_CHECKER);
+  {
+    KinfuTracker::IShiftChecker::Ptr checker = KinfuShiftCheckerFactory::BuildShiftChecker(param_string);
+    if (checker)
+      app.SetShiftChecker(checker);
+  }
 
   // start app main thread
   app.start();

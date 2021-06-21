@@ -274,6 +274,71 @@ namespace pcl
           tfar  = fminf(fminf(tmax.x, tmax.y), fminf(tmax.x, tmax.z));
         }
 
+        __device__
+        bool computeInterpolatedVertexAndNormal(const float3 & world_pt_prev,const float3 & world_pt,
+                                                float time_curr,float time_step,
+                                                const float3 & ray_start,const float3 & ray_dir,
+                                                pcl::gpu::kinfuLS::tsdf_buffer & buffer,
+                                                float3 & position_out, float3 & normal_out) const
+        {
+          float step_correction = 0.5;
+
+          float Ftdt = interpolateTrilineary (world_pt, buffer);
+          if (isnan (Ftdt))
+            return false;
+
+          float Ft = interpolateTrilineary (world_pt_prev, buffer);
+          if (isnan (Ft))
+            return false;
+
+          if (abs(Ftdt - Ft) > 0.1)
+            step_correction = __fdividef(Ft,Ftdt - Ft);
+
+          float Ts = time_curr - time_step * step_correction;
+
+          float3 vetex_found = ray_start + ray_dir * Ts;
+
+          position_out = vetex_found;
+
+          float3 t;
+          float3 n;
+
+          t = vetex_found;
+          t.x += cell_size.x;
+          float Fx1 = interpolateTrilineary (t, buffer);
+
+          t = vetex_found;
+          t.x -= cell_size.x;
+          float Fx2 = interpolateTrilineary (t, buffer);
+
+          n.x = (Fx1 - Fx2);
+
+          t = vetex_found;
+          t.y += cell_size.y;
+          float Fy1 = interpolateTrilineary (t, buffer);
+
+          t = vetex_found;
+          t.y -= cell_size.y;
+          float Fy2 = interpolateTrilineary (t, buffer);
+
+          n.y = (Fy1 - Fy2);
+
+          t = vetex_found;
+          t.z += cell_size.z;
+          float Fz1 = interpolateTrilineary (t, buffer);
+
+          t = vetex_found;
+          t.z -= cell_size.z;
+          float Fz2 = interpolateTrilineary (t, buffer);
+
+          n.z = (Fz1 - Fz2);
+
+          n = normalized (n);
+
+          normal_out = n;
+          return true;
+        }
+
 
         __device__ __forceinline__ void
         operator () (pcl::gpu::kinfuLS::tsdf_buffer buffer) const
@@ -317,7 +382,7 @@ namespace pcl
           readTsdf (g.x, g.y, g.z, buffer, tsdf, weight);
 
           //infinite loop guard
-          const float max_time = fmin(time_exit_volume,3.0 * (volume_size.x + volume_size.y + volume_size.z));
+          const float max_time = min(time_exit_volume,3.0 * (volume_size.x + volume_size.y + volume_size.z));
           const float min_time_step = min(cell_size.x,min(cell_size.y,cell_size.z));
 
           float curr_time_step = time_step;
@@ -444,6 +509,21 @@ namespace pcl
         }
       };
 
+      struct ZeroCrossingOrUnknownStoreCondition
+      {
+        __device__ __forceinline__ bool Evaluate(float tsdf_prev,float tsdf_curr,int /*weight_prev*/,int weight_curr,
+                                                 float3 /*world_pt*/,bool /*below_min_range*/)
+        {
+          return (tsdf_prev > 0.0f && tsdf_curr < 0.0f) || (tsdf_prev < 0.f && tsdf_curr > 0.f) || (weight_curr == 0);
+        }
+
+        __device__ __forceinline__ bool ChangeTimeStep(float /*tsdf_prev*/,float /*tsdf*/,int /*weight_prev*/,int /*weight_curr*/,
+          float /*orig_time_step*/,float /*min_time_step*/,float /*time_step*/,float & /*new_time_step*/,bool & /*rewind*/)
+        {
+          return false;
+        }
+      };
+
       struct NotEmptyStoreCondition
       {
         __device__ __forceinline__ bool Evaluate(float /*tsdf_prev*/,float tsdf_curr,int /*weight_prev*/,int weight_curr,
@@ -520,61 +600,17 @@ namespace pcl
           if (tsdf_prev < 0.f && tsdf > 0.f)
             return; // crossing surface from wrong side
 
-          float step_correction = 0.5;
+          float3 vetex_found;
+          float3 n;
 
-          float Ftdt = parent.interpolateTrilineary (world_pt, buffer);
-          if (isnan (Ftdt))
+          bool ok = parent.computeInterpolatedVertexAndNormal(world_pt_prev, world_pt, time_curr, time_step,
+                                                              ray_start, ray_dir, buffer, vetex_found, n);
+          if (!ok)
             return;
-
-          float Ft = parent.interpolateTrilineary (world_pt_prev, buffer);
-          if (isnan (Ft))
-            return;
-
-          if (abs(Ftdt - Ft) > 0.1)
-            step_correction = __fdividef(Ft,Ftdt - Ft);
-
-          float Ts = time_curr - time_step * step_correction;
-
-          float3 vetex_found = ray_start + ray_dir * Ts;
 
           parent.vmap.ptr (y       )[x] = vetex_found.x;
           parent.vmap.ptr (y + parent.rows)[x] = vetex_found.y;
           parent.vmap.ptr (y + 2 * parent.rows)[x] = vetex_found.z;
-
-          float3 t;
-          float3 n;
-
-          t = vetex_found;
-          t.x += parent.cell_size.x;
-          float Fx1 = parent.interpolateTrilineary (t, buffer);
-
-          t = vetex_found;
-          t.x -= parent.cell_size.x;
-          float Fx2 = parent.interpolateTrilineary (t, buffer);
-
-          n.x = (Fx1 - Fx2);
-
-          t = vetex_found;
-          t.y += parent.cell_size.y;
-          float Fy1 = parent.interpolateTrilineary (t, buffer);
-
-          t = vetex_found;
-          t.y -= parent.cell_size.y;
-          float Fy2 = parent.interpolateTrilineary (t, buffer);
-
-          n.y = (Fy1 - Fy2);
-
-          t = vetex_found;
-          t.z += parent.cell_size.z;
-          float Fz1 = parent.interpolateTrilineary (t, buffer);
-
-          t = vetex_found;
-          t.z -= parent.cell_size.z;
-          float Fz2 = parent.interpolateTrilineary (t, buffer);
-
-          n.z = (Fz1 - Fz2);
-
-          n = normalized (n);
 
           nmap.ptr (y       )[x] = n.x;
           nmap.ptr (y + parent.rows)[x] = n.y;
@@ -582,6 +618,56 @@ namespace pcl
         }
 
         PtrStep<float> nmap;
+      };
+
+      struct InterpolatePointAndNormalWithUnknownStoreAction
+      {
+        template <class _RayCaster>
+        __device__ __forceinline__ void Init(_RayCaster & parent,int x,int y)
+        {
+          parent.vmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
+          nmap.ptr (y)[x] = numeric_limits<float>::quiet_NaN ();
+        }
+
+        template <class _RayCaster>
+        __device__ __forceinline__ void Store(const float3 & world_pt_prev,const float3 & world_pt,
+          const int3 & /*voxel_id*/,float tsdf_prev,float tsdf,float /*weight_prev*/,float weight,
+          float time_curr,float time_step,const float3 & ray_start,const float3 & ray_dir,
+          const _RayCaster & parent,int x,int y,pcl::gpu::kinfuLS::tsdf_buffer & buffer)
+        {
+          float3 vetex_found;
+          float3 n;
+          float u;
+          if (weight == 0 || (tsdf_prev < 0.f && tsdf > 0.f))
+          {
+            u = -time_curr; // unknown
+
+            vetex_found = world_pt;
+            n.x = n.y = n.z = 0.0f;
+          }
+          else
+          {
+            u = time_curr; // occupied
+
+            bool ok = parent.computeInterpolatedVertexAndNormal(world_pt_prev, world_pt, time_curr, time_step,
+                                                                ray_start, ray_dir, buffer, vetex_found, n);
+            if (!ok)
+              return;
+          }
+
+          umap.ptr(y)[x] = u;
+
+          parent.vmap.ptr (y       )[x] = vetex_found.x;
+          parent.vmap.ptr (y + parent.rows)[x] = vetex_found.y;
+          parent.vmap.ptr (y + 2 * parent.rows)[x] = vetex_found.z;
+
+          nmap.ptr (y       )[x] = n.x;
+          nmap.ptr (y + parent.rows)[x] = n.y;
+          nmap.ptr (y + 2 * parent.rows)[x] = n.z;
+        }
+
+        PtrStep<float> nmap;
+        PtrStep<float> umap;
       };
 
       enum // bitmask for STORE_POSE
@@ -746,6 +832,37 @@ namespace pcl
         templatedRaycast<NotEmptyStoreConditionUnkFiltered,SignedSensorDistanceWithPoseStoreAction,BBoxSearchCondition>
           (intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
           neuf,nesc,BBoxSearchCondition(bbox_min,bbox_max));
+      }
+
+      void
+      unkRaycastInterp (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                        float tranc_dist, float min_range, const float3& volume_size,
+                        const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                        const RaycastFilter & filter, const bool skip_unknown_outside_filter,
+                        MapArr& vmap, MapArr& umap, MapArr& nmap)
+      {
+        InterpolatePointAndNormalWithUnknownStoreAction ipanwu;
+        ipanwu.umap = umap;
+        ipanwu.nmap = nmap;
+        templatedRaycast<ZeroCrossingOrUnknownStoreCondition,InterpolatePointAndNormalWithUnknownStoreAction,TrueSearchCondition>
+          (intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
+          ZeroCrossingOrUnknownStoreCondition(),ipanwu,TrueSearchCondition());
+      }
+
+      void
+      unkRaycastInterpBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                            float tranc_dist, float min_range, const float3& volume_size,
+                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                            const RaycastFilter & filter, const bool skip_unknown_outside_filter,
+                            MapArr& vmap, MapArr& umap, MapArr& nmap,
+                            const float3 & bbox_min,const float3 & bbox_max)
+      {
+        InterpolatePointAndNormalWithUnknownStoreAction ipanwu;
+        ipanwu.umap = umap;
+        ipanwu.nmap = nmap;
+        templatedRaycast<ZeroCrossingOrUnknownStoreCondition,InterpolatePointAndNormalWithUnknownStoreAction,BBoxSearchCondition>
+          (intr,Rcurr,tcurr,tranc_dist,min_range,volume_size,volume,buffer,vmap,
+          ZeroCrossingOrUnknownStoreCondition(),ipanwu,BBoxSearchCondition(bbox_min,bbox_max));
       }
 
       void

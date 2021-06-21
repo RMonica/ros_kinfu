@@ -23,7 +23,7 @@ During my research work, I have added several features. These include:
 - Request for synthetic depth maps, projected from arbitrary locations
 - Evaluation of synthetic depth maps (Next Best View)
 - Detection of unknown borders and frontiers
-- Integration of empty (miss) measurements
+- Integration of empty (missed) measurements
 
 As of 2016, PCL KinFu Large Scale source code was integrated into the repository, as PCL support for KinFu is unknown.
 
@@ -62,6 +62,8 @@ For requests, the kinfu node offers two interfaces:
 Requests are sent to the kinfu node, through the topic defined by the parameter request_topic (default: `/kinfu_request_topic`).
 Responses are published by the kinfu node into the topic specified by the request_source_name field in the request.
 
+**Note**: The message-based interface is maintained mostly for backward compatibility, even if it has some niche use cases. Currently, the action-based interface is preferred. It was originally created to solve issues which are no longer existing (see *kinfu_output* below).
+
 **Note**: Since ROS is unable to guarantee the delivery of a message sent by a just-created publisher, kinfu creates a latched publisher and keeps it alive until a subscriber is detected on the topic. If no subscriber is detected, the publisher is discarded after 30 seconds.
 
 ###action-based interface
@@ -69,13 +71,18 @@ This interface wraps the request/response mechanism of kinfu inside an action (a
 The kinfu node creates an action server (by default, `/kinfu_output/actions/request`), of type `kinfu_msgs/Request.action`.
 Multiple actions may be active at the same time and are executed concurrently, if possible (access to KinFu is always exclusive).
 
+Sometimes, the response from KinFu may be too large for ROS, whose messages are limited to 1 GB. When this happens, the output is saved to a temporary file, and the response is empty except for the `file_name` field.
+
 Parameters and their default values are listed in `kinfu/src/parameters.h`.
 
 kinfu\_examples
 ---------------
 
 **save_mesh**: a sample node which uses the action-based interface to request the current mesh 3D reconstruction and saves it into a PLY file.
-**save_voxelgrid**: a sample node which uses the action-based interface to request the voxelgrid of a bounding box, shows how to access its elements, and saves it to a file.
+**save_voxelgrid**: a sample node which requests the voxelgrid in a bounding box, shows how to access its elements, and saves it to a file.
+**save_tsdf_volume**: a sample node that saves the TSDF volume as a point cloud.
+**load_tsdf_volume**: a sample node that reloads the TSDF volume and the voxelgrid into a running instance of KinFu, overwriting the 3D reconstruction in a boundind box. Useful to save and reload the internal state.
+**shift_checker_service**: a sample node showing how to trigger the shifting mechanism of KinFu from an external node. Also see `launch/kinfu_check_for_shift.launch`.
 
 kinfu\_tf\_feeder
 -----------------
@@ -108,4 +115,4 @@ Related publications
 3. R. Monica, J. Aleotti, *Contour-based next-best view planning from point cloud segmentation of unknown objects*, Autonomous Robots, Volume 42, Issue 2, February 2018, Pages 443-458
 4. Riccardo Monica, Jacopo Aleotti, Stefano Caselli, *A KinFu based approach for robot spatial attention and view planning*, Robotics and Autonomous Systems, Volume 75, Part B, 2016
 
-2019-08-27
+2021-06-21

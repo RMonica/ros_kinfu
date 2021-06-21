@@ -453,6 +453,7 @@ void WorldDownloadManager::initRaycaster(bool has_intrinsics,const kinfu_msgs::K
   m_raycaster->setWithVertexMap(true);
   m_raycaster->setWithVoxelIds(false);
   m_raycaster->setSkipUnknownOutsideFilter(false);
+  m_raycaster->setWithInterpolation(false);
 
   if (has_bounding_box_view)
     {

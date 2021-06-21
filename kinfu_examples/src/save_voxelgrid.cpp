@@ -35,12 +35,12 @@ int main(int argc,char ** argv)
   actionlib::SimpleClientGoalState state = actionlib::SimpleClientGoalState::SUCCEEDED;
 
   req_publish.request_bounding_box = true;
-  req_publish.bounding_box_min.x = -0.8;
-  req_publish.bounding_box_min.y = -0.8;
-  req_publish.bounding_box_min.z =  0.0;
-  req_publish.bounding_box_max.x =  1.5;
-  req_publish.bounding_box_max.y =  1.8;
-  req_publish.bounding_box_max.z =  1.0;
+  req_publish.bounding_box_min.x = -1.0;
+  req_publish.bounding_box_min.y = -1.0;
+  req_publish.bounding_box_min.z = 0.0;
+  req_publish.bounding_box_max.x = 1.0;
+  req_publish.bounding_box_max.y = 1.0;
+  req_publish.bounding_box_max.z = 4.0;
 
   actionlib::SimpleActionClient<kinfu_msgs::RequestAction> action_client("/kinfu_output/actions/request",true);
   ROS_INFO("Waiting for server...");
@@ -60,13 +60,31 @@ int main(int argc,char ** argv)
   ROS_INFO("Action succeeded.");
 
   kinfu_msgs::RequestResultConstPtr result = action_client.getResult();
-  const std_msgs::Float32MultiArray & array_msg = result->float_values;
+  std_msgs::Float32MultiArray array_msg = result->float_values;
 
   uint64 sizes[3];
   for (uint i = 0; i < 3; i++)
     sizes[i] = array_msg.layout.dim[i].size;
   uint64 steps[3] = {1,sizes[0],sizes[1] * sizes[0]};
   const uint64 size = sizes[0] * sizes[1] * sizes[2];
+
+  // message too large
+  if (!result->file_name.empty())
+  {
+    ROS_INFO("Kinfu message too large, loading file %s.", result->file_name.c_str());
+    std::ifstream ifile(result->file_name.c_str(), std::ios::binary);
+
+    array_msg.data.resize(size);
+
+    ifile.read((char *)(array_msg.data.data()), size * sizeof(float));
+    if (!ifile)
+    {
+      ROS_ERROR("Could not load file.");
+      return 1;
+    }
+    ifile.close();
+    std::remove(result->file_name.c_str());
+  }
 
   ROS_INFO_STREAM("Grid has size: " << size << " (" << sizes[0] << " " << sizes[1] << " " << sizes[2] << ")");
 

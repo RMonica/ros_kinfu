@@ -275,6 +275,84 @@ void TWeightCubeListener::onClearBBox(const Eigen::Vector3f & m,const Eigen::Vec
     }
   }
 
+void TWeightCubeListener::onReplaceBBox(const WeightVector & weights,
+                                        const Eigen::Vector3i & min,const Eigen::Vector3i & max,
+                                        PointXYZNormalCloud::Ptr cleared_frontier)
+{
+  // scope only
+  boost::mutex::scoped_lock lock(m_cube_mutex);
+  if (m_is_terminating)
+    return;
+  // wait for an empty queue
+  while ((!m_cube_queue.empty()) || (m_currently_working_cubes > 0))
+    {
+    m_cube_cond.wait(lock);
+    if (m_is_terminating)
+      return;
+    }
+
+  const Eigen::Vector3i size = max - min;
+
+  ROS_INFO("kinfu: onReplaceBBox: replacing bounding box...");
+  Eigen::Vector3i t;
+  for (t.x() = 0; t.x() < size.x(); t.x()++)
+    for (t.y() = 0; t.y() < size.y(); t.y()++)
+      for (t.z() = 0; t.z() < size.z(); t.z()++)
+      {
+        const uint64 i = uint64(t.x()) + uint64(t.y()) * size.x() + uint64(t.z()) * size.x() * size.y();
+        m_octree.SetInt(t.x() + min.x(),t.y() + min.y(),t.z() + min.z(), bool(weights[i]));
+      }
+
+  if (cleared_frontier)
+  {
+    ROS_INFO("kinfu: onReplaceBBox: building frontier...");
+    Eigen::Vector3i t;
+    OccupancyOctree::Cache octree_cache;
+    for (t.x() = min.x(); t.x() < max.x(); t.x()++)
+      for (t.y() = min.y(); t.y() < max.y(); t.y()++)
+        for (t.z() = min.z(); t.z() < max.z(); t.z()++)
+        {
+          const bool v = m_octree.GetIntCached(t.x(),t.y(),t.z(),octree_cache);
+
+          if (!v) // points are generated only in known space
+            continue;
+
+          Eigen::Vector3i dt;
+          Eigen::Vector3i normal;
+          for (dt.z() = -1; dt.z() <= 1; dt.z()++)
+            for (dt.y() = -1; dt.y() <= 1; dt.y()++)
+              for (dt.x() = -1; dt.x() <= 1; dt.x()++)
+              {
+                if (dt == Eigen::Vector3i::Zero() || dt.squaredNorm() > 1)
+                  continue;
+
+                const Eigen::Vector3i nt = t + dt;
+                const bool nv = m_octree.GetIntCached(nt.x(),nt.y(),nt.z(),octree_cache);
+
+                if (nv != v)
+                {
+                  normal += dt * (int(!!nv) - int(!!v));
+                }
+              }
+
+          if (normal.squaredNorm() > 0)
+          {
+            pcl::PointNormal pt;
+            pt.x = t.x();
+            pt.y = t.y();
+            pt.z = t.z();
+            pt.normal_x = normal.x();
+            pt.normal_y = normal.y();
+            pt.normal_z = normal.z();
+            cleared_frontier->push_back(pt);
+          }
+          ROS_INFO("kinfu: onReplaceBBox: frontier built.");
+        }
+  }
+
+  m_cube_cond.notify_all();
+}
+
 void TWeightCubeListener::onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
                                           float radius, float half_height,
                                           const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier)

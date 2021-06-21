@@ -3,7 +3,7 @@
 
 // STL
 #include <bitset>
-#include <stdint.h>
+#include <cstdint>
 #include <cstring>
 #include <ostream>
 
@@ -18,14 +18,14 @@ namespace pcl
 {
 // the lower LOWER_BITS of the coordinates will be
 // stored into a bitmask inside the leaf node
-template <uint32_t LOWER_BITS>
+template <std::uint32_t LOWER_BITS>
 class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_BITS * 3))> >
   {
   public:
-  typedef uint32_t uint32;
-  typedef int32_t int32;
-  typedef uint8_t uint8;
-  typedef uint64_t uint64;
+  typedef std::uint32_t uint32;
+  typedef std::int32_t int32;
+  typedef std::uint8_t uint8;
+  typedef std::uint64_t uint64;
 
   enum
     {
@@ -225,7 +225,7 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
     {
     this->Clear();
 
-    for (uint32_t i = 0; i < cloud.size(); i++)
+    for (uint32 i = 0; i < cloud.size(); i++)
       {
       const PointT &pt = cloud[i];
       SetFloat(pt.x,pt.y,pt.z,scale,true);
@@ -271,7 +271,7 @@ class BitmaskOctree: private pcl::octree::OctreeBase<std::bitset<(0x1 << (LOWER_
     {
     this->Clear();
 
-    for (uint32_t i = 0; i < cloud.size(); i++)
+    for (uint32 i = 0; i < cloud.size(); i++)
       {
       PointTWithBitmask &pt = cloud[i];
       SetFloatWithBitmask(pt.x,pt.y,pt.z,scale,pt.bitmask);

@@ -52,35 +52,6 @@ namespace pcl
   {
     namespace kinfuLS
     {
-      //texture<int, 1, cudaReadModeElementType> edgeTex;
-      texture<int, 1, cudaReadModeElementType> triTex;
-      texture<int, 1, cudaReadModeElementType> numVertsTex;
-
-      void
-      bindTextures (const int */*edgeBuf*/, const int *triBuf, const int *numVertsBuf)
-      {
-        cudaChannelFormatDesc desc = cudaCreateChannelDesc<int>();
-        //cudaSafeCall(cudaBindTexture(0, edgeTex, edgeBuf, desc) );
-        cudaSafeCall (cudaBindTexture (0, triTex, triBuf, desc) );
-        cudaSafeCall (cudaBindTexture (0, numVertsTex, numVertsBuf, desc) );
-      }
-      void
-      unbindTextures ()
-      {
-        //cudaSafeCall( cudaUnbindTexture(edgeTex) );
-        cudaSafeCall ( cudaUnbindTexture (numVertsTex) );
-        cudaSafeCall ( cudaUnbindTexture (triTex) );
-      }
-    }
-  }
-}
-
-namespace pcl
-{
-  namespace device
-  {
-    namespace kinfuLS
-    {
 
       struct TrianglesExtractor
       {
@@ -94,6 +65,8 @@ namespace pcl
         __device__ TrianglesExtractor() {}
 
         float tranc_dist;
+        PtrSz<int> tri_tex;
+        PtrSz<int> num_verts_tex;
 
           // returns the number of points extracted
         __device__ __forceinline__ int filter(const FullScan6& parent,
@@ -106,7 +79,7 @@ namespace pcl
           cube_index = computeCubeIndex (parent, x, y, z, f);
 
           // output triangle vertices
-          const int numVerts = tex1Dfetch (numVertsTex, cube_index);
+          const int numVerts = num_verts_tex[cube_index];
 
           if (numVerts != 0)
           {
@@ -188,7 +161,7 @@ namespace pcl
 
         __device__ void store(const FullScan6& parent, int offset_storage, int l)
         {
-          int v = tex1Dfetch (triTex, (cube_index * 16) + l);
+          int v = tri_tex[(cube_index * 16) + l];
           float x = points[v].x;
           float y = points[v].y;
           float z = points[v].z;
@@ -260,16 +233,20 @@ namespace pcl
       };
 
       __global__ void
-      trianglesGeneratorWithNormalsKernel (const FullScan6 tg,float tranc_dist)
+      trianglesGeneratorWithNormalsKernel (const FullScan6 tg,float tranc_dist,
+                                           PtrSz<int> tri_tex, PtrSz<int> num_verts_tex)
       {
         TrianglesExtractor extractor;
         extractor.tranc_dist = tranc_dist;
+        extractor.tri_tex = tri_tex;
+        extractor.num_verts_tex = num_verts_tex;
         tg.templatedExtract(extractor);
       }
 
       int
       generateTrianglesWithNormals (const PtrStep<short2>& volume,
         const pcl::gpu::kinfuLS::tsdf_buffer & buffer, float tranc_dist,
+        DeviceArray<int> & tri_tex, DeviceArray<int> & num_verts_tex,
         DeviceArray<PointType>& output, DeviceArray<PointType>& normals,
         PtrStep<int> last_data_transfer_matrix, int & data_transfer_finished)
       {
@@ -289,7 +266,7 @@ namespace pcl
 
         tg.init_globals();
 
-        trianglesGeneratorWithNormalsKernel<<<grid, block>>>(tg,tranc_dist);
+        trianglesGeneratorWithNormalsKernel<<<grid, block>>>(tg, tranc_dist, tri_tex, num_verts_tex);
         cudaSafeCall ( cudaGetLastError () );
         cudaSafeCall (cudaDeviceSynchronize ());
 

@@ -81,6 +81,7 @@ class WorldDownloadManager: private KinfuOutputIAnswerer
   typedef pcl::PointCloud<pcl::PointXYZI> TsdfCloud;
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloudXYZ;
   typedef pcl::PointCloud<pcl::PointXYZI> PointCloudXYZI;
+  typedef pcl::PointCloud<pcl::PointXYZINormal> PointCloudXYZINormal;
   typedef pcl::PointCloud<pcl::PointNormal> PointCloudXYZNormal;
   typedef pcl::gpu::kinfuLS::RayCaster RayCaster;
   typedef std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f> > Vector3fVector;

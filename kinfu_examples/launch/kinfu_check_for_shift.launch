@@ -1,0 +1,23 @@
+<launch>
+  <include file="$(find openni_launch)/launch/openni.launch">
+    <arg name="camera" value="kinect1" />
+  </include>
+  
+  <node pkg="kinfu" type="kinfu" name="kinect_kinfu1" output="screen">
+    <param name="prefix_topic" value="/kinect1" />
+    <param name="autostart" value="true" />
+    <param name="response_topic" value="/kinfu1_response_topic" />
+    <param name="request_topic" value="/kinfu1_request_topic" />
+    <param name="extract_known_points" value="true" />
+
+    <!--<param name="shift_checker" type="string" value="FIXED 0 0 1.5" />--> <!-- the cube will be located here and never shift -->
+    <!--<param name="shift_checker" type="string" value="NEVER" />-->         <!-- the cube never shifts -->
+    <!--<param name="shift_checker" type="string" value="DEFAULT" />-->       <!-- the cube will shift when the principal point moves too far (default mechanism) -->
+    <param name="shift_checker" type="string" value="ROSSERVICE 1.0 /shift_checker_service" /> <!-- every 1.0 seconds, calls /shift_checker_service to check if it should shift -->
+  </node>
+
+  <node pkg="kinfu_examples" type="shift_checker_service" name="shift_checker_service" output="screen">
+    
+  </node>
+
+</launch>

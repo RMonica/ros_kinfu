@@ -74,6 +74,7 @@ pcl::gpu::kinfuLS::RayCaster::RayCaster(int rows_arg, int cols_arg, float fx, fl
 
   with_vertex_ = true;
   with_known_ = false;
+  has_interpolation_ = false;
   skip_unknown_outside_filter_ = false;
 }
 
@@ -164,7 +165,13 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
   }
   else if (with_known_ && !has_bbox_)
   {
-    if (with_vertex_)
+    if (with_vertex_ && has_interpolation_)
+    {
+      pcl::device::kinfuLS::unkRaycastInterp(intr, device_R, device_t, tranc_dist, min_range_,
+        pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
+        raycast_filter, skip_unknown_outside_filter_, vertex_map_, known_map_, normal_map_);
+    }
+    else if (with_vertex_)
     {
       pcl::device::kinfuLS::unkRaycast (intr, device_R, device_t, tranc_dist, min_range_,
                                         pcl::device::kinfuLS::device_cast<const float3>(volume_size_),
@@ -197,7 +204,13 @@ pcl::gpu::kinfuLS::RayCaster::run(const TsdfVolume& volume, const Affine3f& came
     device_bbox_max.y -= buffer->origin_metric.y;
     device_bbox_max.z -= buffer->origin_metric.z;
 
-    if (with_vertex_)
+    if (with_vertex_ && has_interpolation_)
+    {
+      pcl::device::kinfuLS::unkRaycastInterpBBox(intr, device_R, device_t, tranc_dist, min_range_,
+        pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,
+        raycast_filter, skip_unknown_outside_filter_, vertex_map_, known_map_, normal_map_, device_bbox_min, device_bbox_max);
+    }
+    else if (with_vertex_)
     {
       pcl::device::kinfuLS::unkRaycastBBox(intr, device_R, device_t, tranc_dist, min_range_,
         pcl::device::kinfuLS::device_cast<const float3>(volume_size_), volume.data(), buffer,

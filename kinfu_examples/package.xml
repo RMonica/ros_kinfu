@@ -12,14 +12,17 @@
   <build_depend>kinfu_msgs</build_depend>
   <build_depend>roscpp</build_depend>
   <build_depend>pcl_conversions</build_depend>
+  <build_depend>eigen_conversions</build_depend>
   <build_depend>actionlib</build_depend>
   <build_export_depend>kinfu_msgs</build_export_depend>
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>pcl_conversions</build_export_depend>
+  <build_export_depend>eigen_conversions</build_export_depend>
   <build_export_depend>actionlib</build_export_depend>
   <exec_depend>kinfu_msgs</exec_depend>
   <exec_depend>roscpp</exec_depend>
   <exec_depend>pcl_conversions</exec_depend>
+  <exec_depend>eigen_conversions</exec_depend>
   <exec_depend>actionlib</exec_depend>
 
   <export>

@@ -54,6 +54,9 @@
 #define PARAM_NAME_REQUEST_TOPIC         "request_topic"
 #define PARAM_DEFAULT_REQUEST_TOPIC      "/kinfu_request_topic"
 
+#define PARAM_NAME_WORLD_UPLOAD_ACTION_NAME     "world_upload_action_name"
+#define PARAM_DEFAULT_WORLD_UPLOAD_ACTION_NAME  "/kinfu/world_upload"
+
 #define PARAM_NAME_REQUEST_ACTION_NAME    "request_action_name"
 #define PARAM_DEFAULT_REQUEST_ACTION_NAME "/kinfu_output/actions/request"
 
@@ -154,5 +157,16 @@
 
 #define PARAM_NAME_COMMAND_ACK_TOPIC      "command_ack_topic"
 #define PARAM_DEFAULT_COMMAND_ACK_TOPIC   "/kinfu_command_ack_topic"
+
+#define PARAM_NAME_TEMPORARY_FILE_DIR     "temporary_file_dir"
+#define PARAM_DEFAULT_TEMPORARY_FILE_DIR  "" // empty -> os default
+
+#define PARAM_NAME_SHIFT_CHECKER          "shift_checker" // mode to select when the TSDF volume should shift
+#define PARAM_VALUE_SHIFT_CHECKER_DEFAULT "DEFAULT"       // uses shift_distance and target_point_distance (see above)
+#define PARAM_VALUE_SHIFT_CHECKER_NEVER   "NEVER"         // never shifts
+#define PARAM_VALUE_SHIFT_CHECKER_FIXED   "FIXED"         // format: "FIXED x y z" the TSDF volume is fixed, centered in (x, y, z)
+#define PARAM_VALUE_SHIFT_CHECKER_ROS     "ROSSERVICE"    // format: "ROSSERVICE time service" the ROS service "service" is called
+                                                          //         every "time" seconds to know if it should shift
+#define PARAM_DEFAULT_SHIFT_CHECKER       PARAM_VALUE_SHIFT_CHECKER_DEFAULT
 
 #endif // PARAMETERS_H

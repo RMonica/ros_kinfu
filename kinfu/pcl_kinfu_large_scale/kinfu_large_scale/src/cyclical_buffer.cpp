@@ -40,24 +40,45 @@
 #include <pcl/common/distances.h>
 #include "internal.h"
 
+pcl::gpu::kinfuLS::CyclicalBuffer::DefaultShiftChecker::
+  DefaultShiftChecker(const double distance_camera_target, const double distance_threshold)
+{
+  m_distance_threshold = distance_threshold;
+  m_distance_camera_target = distance_camera_target;
+}
 
+bool pcl::gpu::kinfuLS::CyclicalBuffer::DefaultShiftChecker::CheckForShift(const Eigen::Affine3f & cam_pose,
+                                                                           const Eigen::Vector3f & center_cube)
+{
+  Eigen::Vector3f targetPoint;
+  targetPoint.x() = 0.0f;
+  targetPoint.y() = 0.0f;
+  targetPoint.z() = m_distance_camera_target; // place the point at camera position + distance_camera_target on Z
+  targetPoint = cam_pose * targetPoint;
+
+  return (targetPoint - center_cube).norm() > m_distance_threshold;
+}
+
+Eigen::Vector3f pcl::gpu::kinfuLS::CyclicalBuffer::DefaultShiftChecker::GetNewCubeOrigin(const Eigen::Affine3f & cam_pose)
+{
+  Eigen::Vector3f targetPoint;
+  targetPoint.x() = 0.0f;
+  targetPoint.y() = 0.0f;
+  targetPoint.z() = m_distance_camera_target; // place the point at camera position + distance_camera_target on Z
+  targetPoint = cam_pose * targetPoint;
+
+  return targetPoint;
+}
 
 bool
 pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume,
-                                                  const Eigen::Affine3f &cam_pose,
-                                                  const double distance_camera_target,
-                                                  const double distance_threshold,
+                                                  const Eigen::Affine3f & initial_cam_pose,
+                                                  const Eigen::Affine3f & cam_pose,
+                                                  IShiftChecker & shift_checker,
                                                   const bool perform_shift,
                                                   const bool last_shift,
                                                   const bool force_shift)
 {
-  // project the target point in the cube
-  pcl::PointXYZ targetPoint;
-  targetPoint.x = 0.0f;
-  targetPoint.y = 0.0f;
-  targetPoint.z = distance_camera_target; // place the point at camera position + distance_camera_target on Z
-  targetPoint = pcl::transformPoint (targetPoint, cam_pose);
-
   // check distance from the cube's center
   pcl::PointXYZ center_cube;
   center_cube.x = buffer_.origin_metric.x + buffer_.volume_size.x/2.0f;
@@ -66,7 +87,10 @@ pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume,
 
   checkOldCubeRetrieval(volume);
 
-  const bool distance_shift = pcl::euclideanDistance (targetPoint, center_cube) > distance_threshold;
+  const Eigen::Affine3f inv_initial_cam_pose = initial_cam_pose.inverse();
+  const Eigen::Affine3f global_cam_pose = inv_initial_cam_pose * cam_pose;
+  const Eigen::Vector3f global_center_cube = inv_initial_cam_pose * Eigen::Vector3f(center_cube.x, center_cube.y, center_cube.z);
+  const bool distance_shift = shift_checker.CheckForShift(global_cam_pose, global_center_cube);
 
   if (!perform_shift && !force_shift)
     return (distance_shift);
@@ -80,7 +104,15 @@ pcl::gpu::kinfuLS::CyclicalBuffer::checkForShift (const TsdfVolume::Ptr volume,
 
   // perform shifting operations
   if (distance_shift || force_shift)
-    performShift (volume, targetPoint, last_shift);
+  {
+    const Eigen::Vector3f global_new_center_cube = shift_checker.GetNewCubeOrigin(global_cam_pose);
+    const Eigen::Vector3f new_center_cube = initial_cam_pose * global_new_center_cube;
+    pcl::PointXYZ npt;
+    npt.x = new_center_cube.x();
+    npt.y = new_center_cube.y();
+    npt.z = new_center_cube.z();
+    performShift (volume, npt);
+  }
 
   return (distance_shift);
 }
@@ -141,7 +173,122 @@ void pcl::gpu::kinfuLS::CyclicalBuffer::getCurrentCubeBoundingBox(Eigen::Vector3
 }
 
 void
-pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, const pcl::PointXYZ &target_point, const bool last_shift)
+pcl::gpu::kinfuLS::CyclicalBuffer::pushTSDFCloudToTSDF(const TsdfVolume::Ptr volume,
+                                                       const pcl::PointCloud<pcl::PointXYZI>::ConstPtr tsdf_cloud,
+                                                       const Eigen::Vector3i & bbox_min,
+                                                       const Eigen::Vector3i & bbox_max)
+{
+  const Eigen::Vector3i origin_GRID_global(buffer_.origin_GRID_global.x,
+                                           buffer_.origin_GRID_global.y,
+                                           buffer_.origin_GRID_global.z);
+  const Eigen::Vector3i origin_GRID(buffer_.origin_GRID.x,
+                                    buffer_.origin_GRID.y,
+                                    buffer_.origin_GRID.z);
+  const Eigen::Vector3i voxels_size(buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z);
+  const Eigen::Vector3i max_GRID_global = origin_GRID_global + voxels_size;
+  const Eigen::Vector3i GRID_min = bbox_min.array().max(origin_GRID_global.array());
+  const Eigen::Vector3i GRID_max = bbox_max.array().min(max_GRID_global.array());
+
+  pcl::PointCloud<pcl::PointXYZI>::Ptr existing_slice(new pcl::PointCloud<pcl::PointXYZI>);
+  existing_slice->reserve(tsdf_cloud->size());
+  {
+    const size_t world_size = tsdf_cloud->size();
+    for (size_t i = 0; i < world_size; i++)
+    {
+      const pcl::PointXYZI & ipt = (*tsdf_cloud)[i];
+      const Eigen::Vector3i ept(ipt.x, ipt.y, ipt.z);
+      if ((ept.array() >= GRID_min.array()).all() &&
+          (ept.array() < GRID_max.array()).all())
+        existing_slice->push_back(ipt);
+    }
+    existing_slice->height = 1;
+    existing_slice->width = existing_slice->size();
+  }
+
+  volume->clearBBox(origin_GRID, (GRID_min - origin_GRID_global).cast<float>(),
+                    (GRID_max - origin_GRID_global).cast<float>(), false);
+
+  PCL_INFO("pushWorldModelToTSDF: pushing %u points.\n", unsigned(existing_slice->size ()));
+
+  {
+    Eigen::Affine3f transf = Eigen::Affine3f::Identity();
+    transf.translation() = -origin_GRID_global.cast<float>();
+    pcl::transformPointCloud(*existing_slice, *existing_slice, transf);
+  }
+
+  // push existing data in the TSDF buffer
+  if (existing_slice->size () != 0 ) {
+    volume->pushSlice(existing_slice, getBuffer () );
+  }
+}
+
+/** \brief adds weights data in bounding box
+ */
+void pcl::gpu::kinfuLS::CyclicalBuffer::pushWeightsToTSDF(const TsdfVolume::Ptr volume,
+                                                          const std::vector<short> & weights,
+                                                          const Eigen::Vector3i & bbox_min,
+                                                          const Eigen::Vector3i & bbox_max)
+{
+  const Eigen::Vector3i origin_GRID_global(buffer_.origin_GRID_global.x,
+                                           buffer_.origin_GRID_global.y,
+                                           buffer_.origin_GRID_global.z);
+  const Eigen::Vector3i origin_GRID(buffer_.origin_GRID.x,
+                                    buffer_.origin_GRID.y,
+                                    buffer_.origin_GRID.z);
+  const Eigen::Vector3i voxels_size(buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z);
+  const Eigen::Vector3i max_GRID_global = origin_GRID_global + voxels_size;
+  const Eigen::Vector3i GRID_min = bbox_min.array().max(origin_GRID_global.array());
+  const Eigen::Vector3i GRID_max = bbox_max.array().min(max_GRID_global.array());
+  const Eigen::Vector3i bbox_size = bbox_max - bbox_min;
+  const Eigen::Vector3i GRID_size = GRID_max - GRID_min;
+
+  if ((GRID_size.array() > 0).all()) // there is intersection between bounding box and TSDF
+  {
+    DeviceArray2D<short> device_weights;
+    {
+      std::vector<short> dw(size_t(GRID_size.x()) * GRID_size.y() * GRID_size.z());
+
+      Eigen::Vector3i i;
+      for (i.z() = 0; i.z() < GRID_size.z(); i.z()++)
+        for (i.y() = 0; i.y() < GRID_size.y(); i.y()++)
+          for (i.x() = 0; i.x() < GRID_size.x(); i.x()++)
+          {
+            const size_t di = i.x() + size_t(i.y()) * GRID_size.x() + size_t(i.z()) * GRID_size.x() * GRID_size.y();
+            const Eigen::Vector3i ni = i + GRID_min - bbox_min;
+            const size_t si = ni.x() + size_t(ni.y()) * bbox_size.x() + size_t(ni.z()) * bbox_size.x() * bbox_size.y();
+            dw[di] = weights[si];
+          }
+
+      device_weights.create(GRID_size.y() * GRID_size.z(), GRID_size.x());
+      device_weights.upload(dw, GRID_size.x());
+    }
+
+
+    PCL_INFO ("pushWeightsToTSDF: known: uploading weights...\n");
+    volume->uploadKnownToBBox(origin_GRID, GRID_min, GRID_max, device_weights);
+    PCL_INFO ("known: upload complete.\n");
+  }
+
+  // notify the listeners
+  PCL_INFO ("pushWeightsToTSDF: known: notifying listeners...\n");
+  PointCloudXYZNormal::Ptr cleared_frontier_cloud;
+  if (incomplete_points_listener_ &&
+      incomplete_points_listener_->acceptsType(IncompletePointsListener::TYPE_CLEARED_FRONTIERS))
+    cleared_frontier_cloud.reset(new PointCloudXYZNormal);
+
+  if (weight_cube_listener_)
+    weight_cube_listener_->onReplaceBBox(weights,
+                                         bbox_min, bbox_max,
+                                         cleared_frontier_cloud);
+  if (incomplete_points_listener_)
+    incomplete_points_listener_->onClearBBox(bbox_min.cast<float>(), bbox_max.cast<float>(),
+                                             IncompletePointsListener::TYPE_ANY);
+  if (incomplete_points_listener_ && cleared_frontier_cloud)
+    incomplete_points_listener_->onAddSlice(cleared_frontier_cloud, IncompletePointsListener::TYPE_CLEARED_FRONTIERS);
+}
+
+void
+pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, const pcl::PointXYZ &target_point)
 {
   // compute new origin and offsets
   int offset_x, offset_y, offset_z;
@@ -149,17 +296,10 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
   last_shifting_offset_ = Eigen::Vector3i(offset_x,offset_y,offset_z);
 
   // extract current slice from the TSDF volume (coordinates are in indices! (see fetchSliceAsCloud() )
+  // note: offset is set to maximum, so the whole TSDF volume is always downloaded (1)
   PointCloudXYZI::Ptr current_slice;
-  if(!last_shift)
-  {
-    current_slice = volume->fetchSliceAsPointCloud (cloud_buffer_device_xyz_, cloud_buffer_device_intensities_,
-      last_data_transfer_matrix_device_, &buffer_, offset_x, offset_y, offset_z);
-  }
-  else
-  {
-    current_slice = volume->fetchSliceAsPointCloud (cloud_buffer_device_xyz_, cloud_buffer_device_intensities_,
-      last_data_transfer_matrix_device_, &buffer_, buffer_.voxels_size.x - 1, buffer_.voxels_size.y - 1, buffer_.voxels_size.z - 1);
-  }
+  current_slice = volume->fetchSliceAsPointCloud (cloud_buffer_device_xyz_, cloud_buffer_device_intensities_,
+    last_data_transfer_matrix_device_, &buffer_, buffer_.voxels_size.x - 1, buffer_.voxels_size.y - 1, buffer_.voxels_size.z - 1);
 
   // save the known points
   Eigen::Vector3i onNewCube_cyclical_shifted_origin(buffer_.origin_GRID.x,buffer_.origin_GRID.y,buffer_.origin_GRID.z);
@@ -228,9 +368,12 @@ pcl::gpu::kinfuLS::CyclicalBuffer::performShift (const TsdfVolume::Ptr volume, c
                                 *previously_existing_slice);
 
   //replace world model data with values extracted from the TSDF buffer slice
-  world_model_.setSliceAsNans (buffer_.origin_GRID_global.x, buffer_.origin_GRID_global.y, buffer_.origin_GRID_global.z,
-                               offset_x, offset_y, offset_z,
-                               buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z);
+  // clear full cube, as we are downloading the full TSDF volume (see (1) above)
+  world_model_.setFullCubeAsNans (buffer_.origin_GRID_global.x, buffer_.origin_GRID_global.y, buffer_.origin_GRID_global.z,
+                                  buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z);
+//  world_model_.setSliceAsNans (buffer_.origin_GRID_global.x, buffer_.origin_GRID_global.y, buffer_.origin_GRID_global.z,
+//                               offset_x, offset_y, offset_z,
+//                               buffer_.voxels_size.x, buffer_.voxels_size.y, buffer_.voxels_size.z);
 
 
   PCL_INFO ("world contains %d points after update\n", world_model_.getWorldSize ());

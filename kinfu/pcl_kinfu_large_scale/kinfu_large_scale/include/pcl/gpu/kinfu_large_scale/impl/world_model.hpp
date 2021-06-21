@@ -43,7 +43,7 @@
 
 template <typename PointT>
 void 
-pcl::kinfuLS::WorldModel<PointT>::addSlice ( PointCloudPtr new_cloud)
+pcl::kinfuLS::WorldModel<PointT>::addSlice ( PointCloudConstPtr new_cloud)
 {
   PCL_DEBUG ("Adding new cloud. Current world contains %d points.\n", world_->points.size ());
 
@@ -232,16 +232,44 @@ pcl::kinfuLS::WorldModel<PointT>::setIndicesAsNans (PointCloudPtr cloud, Indices
   
   for (int rii = 0; rii < static_cast<int> (indices->size ()); ++rii)  // rii = removed indices iterator
   {
-	uint8_t* pt_data = reinterpret_cast<uint8_t*> (&cloud->points[(*indices)[rii]]);
+  std::uint8_t* pt_data = reinterpret_cast<std::uint8_t*> (&cloud->points[(*indices)[rii]]);
 	for (int fi = 0; fi < static_cast<int> (fields.size ()); ++fi)  // fi = field iterator
 	  memcpy (pt_data + fields[fi].offset, &my_nan, sizeof (float));
+  }
+}
+
+template <typename PointT>
+void
+pcl::kinfuLS::WorldModel<PointT>::setFullCubeAsNans (const double origin_x, const double origin_y, const double origin_z,
+                                                     const int size_x, const int size_y, const int size_z)
+{
+  {
+    const size_t world_size = world_->size();
+    for (size_t i = 0; i < world_size; i++)
+    {
+      PointT & ipt = (*world_)[i];
+      bool removed = false;
+
+      if (ipt.x >= origin_x && ipt.y >= origin_y && ipt.z >= origin_z &&
+          ipt.x < origin_x + size_x && ipt.y < origin_y + size_y && ipt.z < origin_z + size_z)
+        removed = true;
+
+      if (removed)
+      {
+        ipt.x = NAN;
+        ipt.y = NAN;
+        ipt.z = NAN;
+      }
+    }
   }
 }
 
 
 template <typename PointT>
 void 
-pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const double origin_y, const double origin_z, const double offset_x, const double offset_y, const double offset_z, const int size_x, const int size_y, const int size_z)
+pcl::kinfuLS::WorldModel<PointT>::setSliceAsNans (const double origin_x, const double origin_y, const double origin_z,
+                                                  const double offset_x, const double offset_y, const double offset_z,
+                                                  const int size_x, const int size_y, const int size_z)
 { 
   // PCL_DEBUG ("IN SETSLICE AS NANS\n");
   

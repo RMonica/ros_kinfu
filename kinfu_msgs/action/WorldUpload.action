@@ -1,0 +1,12 @@
+sensor_msgs/PointCloud2 tsdf_volume
+
+geometry_msgs/Point bbox_min
+geometry_msgs/Point bbox_max
+
+std_msgs/UInt8MultiArray known_voxelgrid # 1 if point is known, 0 otherwise
+                                         # ignored if empty
+
+bool reset
+---
+bool ok
+---

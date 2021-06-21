@@ -82,6 +82,8 @@ namespace pcl
           typedef pcl::Normal NormalType;
           typedef PointCloud<PointNormal> PointCloudXYZNormal;
 
+          typedef CyclicalBuffer::IShiftChecker IShiftChecker;
+
           void 
           performLastScan (){perform_last_scan_ = true; PCL_WARN ("Kinfu will exit after next shift\n");}
           
@@ -113,6 +115,9 @@ namespace pcl
             */
           void
           setInitialCameraPose (const Eigen::Affine3f& pose);
+
+          Eigen::Affine3f
+          getInitialCameraPose() const;
                           
           /** \brief Sets truncation threshold for depth image for ICP step only! This helps 
             *  to filter measurements that are outside tsdf volume. Pass zero to disable the truncation.
@@ -306,6 +311,24 @@ namespace pcl
 
           void syncKnownPoints();
 
+          void waitForShiftEnd();
+
+          /**
+           * @brief replaces the TSDF volume between bbox_min and bbox_max with tsdf_cloud
+           * @param tsdf_cloud the cloud
+           * @param bbox_min   the bounding box lower bound
+           * @param bbox_max   the bounding box upper bound
+           * @param do_clear   true, unless the bounding box has already been cleared by other means
+           */
+          void pushTSDFCloudToTSDF(
+              const pcl::PointCloud<pcl::PointXYZI>::ConstPtr tsdf_cloud,
+              const Eigen::Vector3i & bbox_min, const Eigen::Vector3i & bbox_max, const bool do_clear = true);
+
+          void pushWeightsToTSDF(
+              const std::vector<short> & weights,
+              const Eigen::Vector3i & bbox_min,
+              const Eigen::Vector3i & bbox_max);
+
           void setWeightCubeListener(CyclicalBuffer::WeightCubeListener::Ptr listener)
           {
             cyclical_.setWeightCubeListener(listener);
@@ -323,6 +346,8 @@ namespace pcl
           {
             cyclical_.setIncompletePointsListener(listener);
           }
+
+          void setShiftChecker(const IShiftChecker::Ptr checker);
           
           /** \brief Returns true if ICP is currently lost */
           bool
@@ -461,6 +486,8 @@ namespace pcl
           
           /** \brief Cyclical buffer object */
           CyclicalBuffer cyclical_;
+
+          IShiftChecker::Ptr cyclical_shift_checker_;
           
           /** \brief Height of input depth image. */
           int rows_;

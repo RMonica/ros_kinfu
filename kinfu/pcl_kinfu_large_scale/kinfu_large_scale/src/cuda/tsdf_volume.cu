@@ -1127,6 +1127,76 @@ namespace pcl
         cudaSafeCall ( cudaGetLastError () );
         cudaSafeCall (cudaDeviceSynchronize ());
       }
+
+      template<typename T>
+      __global__ void
+      uploadKnownToBBoxKernel(PtrStep<T> volume,int3 volume_size,int3 shift,int3 m,int3 M,
+                              PtrStep<short> known_status)
+      {
+        int x = threadIdx.x + blockIdx.x * blockDim.x;
+        int y = threadIdx.y + blockIdx.y * blockDim.y;
+
+        int3 known_status_size;
+        known_status_size.x = M.x - m.x;
+        known_status_size.y = M.y - m.y;
+        known_status_size.z = M.z - m.z;
+
+        if (x < volume_size.x && y < volume_size.y)
+        {
+            int ax = x + shift.x;
+            if (ax >= volume_size.x)
+                ax -= volume_size.x;
+            int ay = y + shift.y;
+            if (ay >= volume_size.y)
+                ay -= volume_size.y;
+
+            T *pos = volume.ptr(ay) + ax;
+
+  #pragma unroll
+            for(int z = 0; z < volume_size.z; ++z)
+            {
+              int az = z + shift.z;
+              if (az >= volume_size.z)
+                az -= volume_size.z;
+
+              float3 pt;
+              pt.x = float(x);
+              pt.y = float(y);
+              pt.z = float(z);
+
+              if ((pt.x >= m.x) && (pt.y >= m.y) && (pt.z >= m.z) &&
+                (pt.x < M.x) && (pt.y < M.y) && (pt.z < M.z))
+              {
+                short * ks = known_status.ptr((y - m.y) + (z - m.z) * known_status_size.y) + (x - m.x);
+                const short increment = *ks;
+
+                if (increment) {
+                  float tsdf;
+                  int w;
+                  unpack_tsdf(*pos, tsdf, w);
+                  if (w == 0)
+                    tsdf = 1.0;
+                  pack_tsdf (tsdf, min(increment + w,(Tsdf::MAX_WEIGHT)), *pos);
+                }
+              }
+            }
+        }
+      }
+
+      void
+      uploadKnownToBBox (PtrStep<short2> volume, const int3 voxels_size,const int3& origin,
+                         const int3& m,const int3& M,
+                         PtrStep<short> known_status)
+      {
+        dim3 block (32, 16);
+        dim3 grid (1, 1, 1);
+        grid.x = divUp (voxels_size.x, block.x);
+        grid.y = divUp (voxels_size.y, block.y);
+
+        uploadKnownToBBoxKernel<<<grid, block>>>(volume,voxels_size,origin,m,M,known_status);
+        cudaSafeCall ( cudaGetLastError () );
+        cudaSafeCall (cudaDeviceSynchronize ());
+      }
     }
   }
 }

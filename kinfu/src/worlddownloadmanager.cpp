@@ -219,6 +219,15 @@ void WorldDownloadManager::extractTsdfWorker(kinfu_msgs::KinfuTsdfRequestConstPt
 
   unlockKinfu();
 
+  {
+    const float kinfu_voxel_size = m_kinfu->getVoxelSize();
+    Eigen::Affine3f scaling;
+    scaling = Eigen::Scaling(kinfu_voxel_size);
+    const Eigen::Affine3f transform = m_reverse_initial_transformation * scaling;
+
+    pcl::transformPointCloud(*cloud, *cloud, transform);
+  }
+
   // is crop required?
   if (req->request_bounding_box)
   {
@@ -612,6 +621,7 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   m_raycaster->setWithKnown(true);
   m_raycaster->setWithVertexMap(true);
   m_raycaster->setSkipUnknownOutsideFilter(req->skip_unknown_outside_filter);
+  m_raycaster->setWithInterpolation(req->use_accurate_ray_cast_interpolation);
 
   ROS_INFO("kinfu: generating scene...");
   m_raycaster->run ( m_kinfu->volume (), view_pose, m_kinfu->getCyclicalBufferStructure ());
@@ -624,6 +634,12 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
 
   std::vector<float> intensity_host(size);
   m_raycaster->getKnownMap().download (intensity_host,useless_cols);
+
+  std::vector<float> normal_host(size * 3);
+  if (req->use_accurate_ray_cast_interpolation)
+  {
+    m_raycaster->getNormalMap().download (normal_host, useless_cols);
+  }
 
   const Eigen::Vector3f cycl_o(m_kinfu->getCyclicalBufferStructure()->origin_metric.x,
                                m_kinfu->getCyclicalBufferStructure()->origin_metric.y,
@@ -640,7 +656,7 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   unlockKinfu();
 
   ROS_INFO("kinfu: Applying transform...");
-  PointCloudXYZI::Ptr cloud(new PointCloudXYZI());
+  PointCloudXYZINormal::Ptr cloud(new PointCloudXYZINormal());
   cloud->resize(size);
   for (uint i = 0; i < size; i++)
   {
@@ -658,6 +674,16 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
     (*cloud)[i].x = tpt.x();
     (*cloud)[i].y = tpt.y();
     (*cloud)[i].z = tpt.z();
+
+    if (req->use_accurate_ray_cast_interpolation)
+    {
+      const Eigen::Vector3f en(normal_host[i],normal_host[i + size],normal_host[i + size * 2]);
+      const Eigen::Vector3f ten = m_reverse_initial_transformation.linear() * en;
+      (*cloud)[i].normal_x = ten.x();
+      (*cloud)[i].normal_y = ten.y();
+      (*cloud)[i].normal_z = ten.z();
+    }
+
     (*cloud)[i].intensity = intensity_host[i];
   }
 
@@ -666,7 +692,7 @@ void WorldDownloadManager::extractViewCloudWorker(kinfu_msgs::KinfuTsdfRequestCo
   cloud->is_dense = false;
 
   ROS_INFO("kinfu: Sending message...");
-  pcl::toROSMsg(*cloud,resp->pointcloud);
+  pcl::toROSMsg(*cloud, resp->pointcloud);
 
   resp->header.frame_id = m_reference_frame_name;
   resp->header.stamp = ros::Time::now();

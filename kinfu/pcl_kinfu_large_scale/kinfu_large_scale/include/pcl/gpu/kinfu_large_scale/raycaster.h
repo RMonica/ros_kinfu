@@ -102,6 +102,10 @@ namespace pcl
         void
         clearBoundingBox() {has_bbox_ = false; }
 
+        /** \brief enables interpolation */
+        void
+        setWithInterpolation(const bool enabled) {has_interpolation_ = enabled; }
+
         void
         setBoundingBoxFilter(const Eigen::Vector3f & bbox_min,const Eigen::Vector3f & bbox_max)
           {filter_data_.bbox_min = bbox_min; filter_data_.bbox_max = bbox_max; filter_data_.has_bbox = true; }
@@ -212,6 +216,9 @@ namespace pcl
         bool has_bbox_;
         Eigen::Vector3f bbox_min_;
         Eigen::Vector3f bbox_max_;
+
+        /** \brief true if interpolation must be enabled */
+        bool has_interpolation_;
 
         bool skip_unknown_outside_filter_;
         struct FilterData

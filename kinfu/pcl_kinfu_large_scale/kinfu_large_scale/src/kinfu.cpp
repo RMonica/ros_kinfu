@@ -77,7 +77,7 @@ namespace pcl
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pcl::gpu::kinfuLS::KinfuTracker::KinfuTracker (const Eigen::Vector3f &volume_size, const Eigen::Vector3i & volume_resolution,
                                                const float shiftingDistance, int rows, int cols) :
-  cyclical_( shiftingDistance, volume_size.x(), volume_resolution.x()),
+  cyclical_(volume_size.x(), volume_resolution.x()),
   rows_(rows), cols_(cols), global_time_(0), max_icp_distance_(0),
   integration_metric_threshold_(0.f), perform_last_scan_ (false),
   finished_(false), lost_ (false), disable_icp_ (false)
@@ -93,8 +93,9 @@ pcl::gpu::kinfuLS::KinfuTracker::KinfuTracker (const Eigen::Vector3f &volume_siz
   shifting_distance_ = shiftingDistance;
 
   // set cyclical buffer values
-  cyclical_.setDistanceThreshold (shifting_distance_);
   cyclical_.setVolumeSize (volume_size_, volume_size_, volume_size_);
+
+  cyclical_shift_checker_.reset(new CyclicalBuffer::DefaultShiftChecker(target_point_distance_, shifting_distance_));
 
   setDepthIntrinsics (FOCAL_LENGTH, FOCAL_LENGTH); // default values, can be overwritten
   
@@ -144,6 +145,16 @@ pcl::gpu::kinfuLS::KinfuTracker::setInitialCameraPose (const Eigen::Affine3f& po
   init_Rcam_ = pose.rotation ();
   init_tcam_ = pose.translation ();
   //reset (); // (already called in constructor)
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+Eigen::Affine3f
+pcl::gpu::kinfuLS::KinfuTracker::getInitialCameraPose() const
+{
+  Eigen::Affine3f pose;
+  pose.linear() = init_Rcam_;
+  pose.translation() = init_tcam_;
+  return pose;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -200,8 +211,9 @@ pcl::gpu::kinfuLS::KinfuTracker::shiftNear (const Eigen::Affine3f & pose, float 
                                             float distance_threshold, bool forced)
 {
   if (distance_threshold <= 0.0f)
-    distance_threshold = cyclical_.getDistanceThreshold();
-  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, pose, distance, distance_threshold, true, false, forced);
+    distance_threshold = shifting_distance_;
+  CyclicalBuffer::DefaultShiftChecker checker(distance, distance_threshold);
+  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, getInitialCameraPose(), pose, checker, true, false, forced);
   return has_shifted_;
 }
 
@@ -211,7 +223,8 @@ pcl::gpu::kinfuLS::KinfuTracker::extractAndSaveWorld ()
   
   //extract current volume to world model
   PCL_INFO("Extracting current volume...");
-  cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
+  cyclical_.checkForShift(tsdf_volume_, getInitialCameraPose(), getCameraPose (),
+                          *cyclical_shift_checker_, true, true, true); // this will force the extraction of the whole cube.
   PCL_INFO("Done\n");
   
   finished_ = true; // TODO maybe we could add a bool param to prevent kinfuLS from exiting after we saved the current world model
@@ -234,23 +247,53 @@ pcl::gpu::kinfuLS::KinfuTracker::extractAndSaveWorld ()
   
 }
 
+void pcl::gpu::kinfuLS::KinfuTracker::waitForShiftEnd()
+{
+  while (!isShiftComplete())
+    updateShift();
+}
+
+void pcl::gpu::kinfuLS::KinfuTracker::pushTSDFCloudToTSDF(
+    const pcl::PointCloud<pcl::PointXYZI>::ConstPtr tsdf_cloud,
+    const Eigen::Vector3i & bbox_min, const Eigen::Vector3i & bbox_max, const bool do_clear)
+{
+  // replace in the world model
+  pcl::kinfuLS::WorldModel<pcl::PointXYZI> * world_model = getCyclicalBuffer().getWorldModel();
+  if (do_clear)
+    world_model->clearBBox(bbox_min.cast<float>(), bbox_max.cast<float>());
+  if (!tsdf_cloud->empty())
+    world_model->addSlice(tsdf_cloud);
+
+  cyclical_.pushTSDFCloudToTSDF(tsdf_volume_, tsdf_cloud, bbox_min, bbox_max);
+}
+
+void pcl::gpu::kinfuLS::KinfuTracker::pushWeightsToTSDF(
+    const std::vector<short> & weights,
+    const Eigen::Vector3i & bbox_min,
+    const Eigen::Vector3i & bbox_max)
+{
+  cyclical_.pushWeightsToTSDF(tsdf_volume_, weights, bbox_min, bbox_max);
+}
+
 void pcl::gpu::kinfuLS::KinfuTracker::syncKnownPoints()
-  {
+{
   //extract current volume
   if (!just_shifted_)
-    cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true);
+    cyclical_.checkForShift(tsdf_volume_, getInitialCameraPose(),
+                            getCameraPose (), *cyclical_shift_checker_, true, true, true);
   else
     PCL_INFO("checkForShift skipped: already done.\n");
     // this will force the extraction of the whole cube.
   just_shifted_ = true;
-  }
+}
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr pcl::gpu::kinfuLS::KinfuTracker::extractWorld()
 {
   //extract current volume to world model
   PCL_INFO("Extracting current volume...");
   if (!just_shifted_)
-    cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
+    cyclical_.checkForShift(tsdf_volume_, getInitialCameraPose(),
+                            getCameraPose(), *cyclical_shift_checker_, true, true, true); // this will force the extraction of the whole cube.
   else
     PCL_INFO("checkForShift skipped: already done.");
   just_shifted_ = true;
@@ -266,7 +309,8 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr pcl::gpu::kinfuLS::KinfuTracker::extractWor
 {
   //extract current volume to world model
   PCL_INFO("Extracting current volume...");
-  cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, true, true); // this will force the extraction of the whole cube.
+  cyclical_.checkForShift(tsdf_volume_, getInitialCameraPose(),
+                          getCameraPose (), *cyclical_shift_checker_, true, true, true); // this will force the extraction of the whole cube.
   PCL_INFO("Done\n");
 
   pcl::PointCloud<pcl::PointXYZI>::Ptr result =
@@ -405,6 +449,8 @@ pcl::gpu::kinfuLS::KinfuTracker::clearBBox(const Eigen::Vector3f & min,const Eig
   translated_max.y() -= cyclical_.getBuffer()->origin_metric.y;
   translated_max.z() -= cyclical_.getBuffer()->origin_metric.z;
 
+  translated_max = translated_max.array().min(Eigen::Vector3f::Constant(volume_size_).array());
+
   const Eigen::Vector3f expanded_max = max * voxels_size_ / volume_size_;
   const Eigen::Vector3f expanded_translated_max = translated_max * voxels_size_ / volume_size_;
 
@@ -412,6 +458,8 @@ pcl::gpu::kinfuLS::KinfuTracker::clearBBox(const Eigen::Vector3f & min,const Eig
   translated_min.x() -= cyclical_.getBuffer()->origin_metric.x;
   translated_min.y() -= cyclical_.getBuffer()->origin_metric.y;
   translated_min.z() -= cyclical_.getBuffer()->origin_metric.z;
+
+  translated_min = translated_min.array().max(Eigen::Vector3f::Zero().array());
 
   const Eigen::Vector3f expanded_min = min * voxels_size_ / volume_size_;
   const Eigen::Vector3f expanded_translated_min = translated_min * voxels_size_ / volume_size_;
@@ -614,9 +662,9 @@ pcl::gpu::kinfuLS::KinfuTracker::performICP(const Intr& cam_intrinsics, Matrix3f
         // checking nullspace 
         double det = A.determinant ();
     
-        if ( fabs (det) < 100000 /*1e-15*/ || pcl_isnan (det) ) //TODO find a threshold that makes ICP track well, but prevents it from generating wrong transforms
+        if ( fabs (det) < 100000 /*1e-15*/ || std::isnan (det) ) //TODO find a threshold that makes ICP track well, but prevents it from generating wrong transforms
         {
-          if (pcl_isnan (det)) cout << "qnan" << endl;
+          if (std::isnan (det)) cout << "qnan" << endl;
           if(lost_ == false)
             PCL_ERROR ("ICP LOST... PLEASE COME BACK TO THE LAST VALID POSE (green)\n");
           //reset (); //GUI will now show the user that ICP is lost. User needs to press "R" to reset the volume
@@ -699,9 +747,9 @@ pcl::gpu::kinfuLS::KinfuTracker::performPairWiseICP(const Intr cam_intrinsics, M
         // checking nullspace 
         double det = A.determinant ();
         
-        if ( fabs (det) < 1e-15 || pcl_isnan (det) )
+        if ( fabs (det) < 1e-15 || std::isnan (det) )
         {
-          if (pcl_isnan (det)) cout << "qnan" << endl;
+          if (std::isnan (det)) cout << "qnan" << endl;
                     
           PCL_WARN ("ICP PairWise LOST...\n");
           //reset ();
@@ -872,7 +920,8 @@ pcl::gpu::kinfuLS::KinfuTracker::operator() (const DepthMap& depth_raw,const THi
 
   ///////////////////////////////////////////////////////////////////////////////////////////  
   // check if we need to shift
-  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, getCameraPose (), target_point_distance_, cyclical_.getDistanceThreshold(), true, perform_last_scan_); // TODO make target distance from camera a param
+  has_shifted_ = cyclical_.checkForShift(tsdf_volume_, getInitialCameraPose(),
+                                         getCameraPose (), *cyclical_shift_checker_, true, perform_last_scan_);
   if(has_shifted_)
     PCL_WARN ("SHIFTING\n");
   
@@ -946,6 +995,16 @@ void pcl::gpu::kinfuLS::KinfuTracker::IntegrateEmptyMap(const DepthMap& depth_ra
   integrateTsdfVolumeOnlyEmpty (depth_raw, intr, device_volume_size, device_current_rotation_inv,
                        device_current_translation_local, tsdf_volume_->getTsdfTruncDist (),
                        tsdf_volume_->data (), getCyclicalBufferStructure (), depthEmptyRawScaled_);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void pcl::gpu::kinfuLS::KinfuTracker::setShiftChecker(const IShiftChecker::Ptr checker)
+{
+  if (checker)
+  {
+    cyclical_shift_checker_ = checker;
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

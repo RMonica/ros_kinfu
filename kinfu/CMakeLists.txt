@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 2.8.3)
 project(kinfu)
 
 if (CMAKE_COMPILER_IS_GNUCC AND (NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 6.0))
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++98")
-  message(STATUS "kinfu: forcing c++98 for CUDA compatibility.")
+  #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++98")
+  #message(STATUS "kinfu: forcing c++98 for CUDA compatibility.")
 endif()
 
 find_package(catkin REQUIRED COMPONENTS
@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   pcl_msgs
   pcl_conversions
+  eigen_conversions
 )
 
 find_package(
@@ -27,17 +28,7 @@ find_package(
   Eigen3 REQUIRED
   )
 
-set(KINFUTRIGGER_FILE "cmake/KinfuTrigger.cmake")
-
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${KINFUTRIGGER_FILE}")
-  set(KINFU_CONFIGURED true)
-  message(STATUS "kinfu: file ${KINFUTRIGGER_FILE} found, kinfu will be built.")
-  add_subdirectory(pcl_kinfu_large_scale)
-  include("${CMAKE_CURRENT_SOURCE_DIR}/${KINFUTRIGGER_FILE}")
-else()
-  set(KINFU_CONFIGURED false)
-  message(WARNING "kinfu: file ${KINFUTRIGGER_FILE} not found, kinfu won't be built.")
-endif()
+add_subdirectory(pcl_kinfu_large_scale)
 
 ################################################
 ## Declare ROS messages, services and actions ##
@@ -64,31 +55,31 @@ include_directories(
 
 link_directories(${PCL_LIBRARY_DIRS})
 
-if (${KINFU_CONFIGURED})
-  add_executable(kinfu
-    src/commandsubscriber.cpp
-    src/kinfuLS.cpp
-    src/weightcubelistener.cpp
-    src/worlddownloadmanager.cpp
-    src/worlddownloadutils.cpp
-    src/incompletepointslistener.cpp
+add_executable(kinfu
+  src/commandsubscriber.cpp
+  src/kinfuLS.cpp
+  src/weightcubelistener.cpp
+  src/worlddownloadmanager.cpp
+  src/worlddownloadutils.cpp
+  src/incompletepointslistener.cpp
+  src/kinfu_shift_checker.cpp
+  src/world_upload.cpp
 
-    src/kinfu_output_request_manager.cpp
-    src/kinfu_output_action_manager.cpp
-    src/kinfu_output_save_file.cpp
-    )
-
-  add_dependencies(kinfu ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-
-  target_link_libraries(kinfu
-    boost_system boost_signals
-    ${CUDA_LIBRARIES}
-    ${PCL_LIBRARIES}
-    ${catkin_LIBRARIES}
-    ${KinfuLargeScale_LIBRARIES}
-    ${Eigen_LIBRARIES}
+  src/kinfu_output_request_manager.cpp
+  src/kinfu_output_action_manager.cpp
+  src/kinfu_output_save_file.cpp
   )
-endif()
+
+add_dependencies(kinfu ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(kinfu
+  boost_system
+  ${CUDA_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${catkin_LIBRARIES}
+  ${KinfuLargeScale_LIBRARIES}
+  ${Eigen_LIBRARIES}
+)
 
 #############
 ## Install ##

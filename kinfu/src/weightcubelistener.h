@@ -58,6 +58,7 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
   {
   public:
   typedef pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeListener Listener;
+  typedef std::vector<bool> BoolVector;
   typedef pcl::BitmaskOctree<3> OccupancyOctree;
   typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
   typedef pcl::PointCloud<pcl::PointNormal> PointXYZNormalCloud;
@@ -73,12 +74,16 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
     const Eigen::Vector3i& cyclical_shifted_origin,const Eigen::Vector3i& grid_origin);
 
   void onClearSphere(const Eigen::Vector3f & center,float radius,
-                     const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
+                     const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) override;
   void onClearBBox(const Eigen::Vector3f & min,const Eigen::Vector3f & max,
-                   const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
+                   const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) override;
   void onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
                        float radius, float half_height,
-                       const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier);
+                       const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) override;
+  void onReplaceBBox(const WeightVector & weights,
+                     const Eigen::Vector3i & min, const Eigen::Vector3i & max,
+                     PointXYZNormalCloud::Ptr cleared_frontier) override;
+
 
   void onReset();
 
@@ -111,6 +116,7 @@ class TWeightCubeListener: public pcl::gpu::kinfuLS::CyclicalBuffer::WeightCubeL
   void CubeWorker();
   void NewCubeWorker(NewCubeInfo::Ptr new_info);
   void RetrieveCubeWorker(NewCubeInfo::Ptr new_info);
+  void ReplaceCubeWorker(NewCubeInfo::Ptr new_info);
 
   PointCloud::Ptr GetOccupiedVoxelCenters();
   uint64 CountOccupiedVoxelsInSphere(const Eigen::Vector3f & center,float radius,bool inverse = false);

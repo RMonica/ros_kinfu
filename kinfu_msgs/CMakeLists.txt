@@ -25,11 +25,18 @@ add_message_files(
     KinfuCameraIntrinsics.msg
   )
 
+add_service_files(
+  DIRECTORY srv
+    FILES
+    CheckForShift.srv
+  )
+
 add_action_files(
   DIRECTORY
     action
   FILES
     Request.action
+    WorldUpload.action
   )
 
 generate_messages(

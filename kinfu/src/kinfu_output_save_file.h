@@ -47,6 +47,8 @@ class KinfuOutputSaveFile
 
   private:
   ros::NodeHandle & m_nh;
+
+  std::string m_temp_file_dir;
 };
 
 #endif // KINFU_OUTPUT_SAVE_FILE_H

@@ -377,34 +377,79 @@ class VoxelgridToCollisionMap
     ROS_INFO("kinfu_voxelgrid_to_collision_map: message received.");
 
     Eigen::Vector3i input_sizes;
-    for (uint i = 0; i < 3; i++)
-      input_sizes[i] = msg.layout.dim[i].size;
+    uint xi = uint(-1);
+    uint yi = uint(-1);
+    uint zi = uint(-1);
+    for (uint i = 0; i < msg.layout.dim.size(); i++)
+    {
+      if (msg.layout.dim[i].label == "x")
+        xi = i;
+      if (msg.layout.dim[i].label == "y")
+        yi = i;
+      if (msg.layout.dim[i].label == "z")
+        zi = i;
+    }
+    if (xi == uint(-1) || yi == uint(-1) || zi == uint(-1))
+    {
+      ROS_ERROR("kinfu_voxelgrid_to_collision_map: could not find x, y, z in layout.");
+      return;
+    }
+
+    input_sizes[0] = msg.layout.dim[xi].size;
+    input_sizes[1] = msg.layout.dim[yi].size;
+    input_sizes[2] = msg.layout.dim[zi].size;
+    const uint64 input_size = msg.layout.dim[xi].size * msg.layout.dim[yi].size * msg.layout.dim[zi].size;
     const Eigen::Vector3i input_steps(1,input_sizes[0],input_sizes[1] * input_sizes[0]);
 
     const Eigen::Vector3i output_sizes =
-      (input_sizes.cast<float>() * m_input_scale / m_output_scale + Eigen::Vector3f::Ones()).cast<int>();
+      ((input_sizes - Eigen::Vector3i::Ones()).cast<float>() * m_input_scale / m_output_scale +
+       Eigen::Vector3f::Ones() * 0.5).cast<int>() + Eigen::Vector3i::Ones();
     const Eigen::Vector3i output_steps(1,output_sizes[0],output_sizes[1] * output_sizes[0]);
     const uint64 output_size = uint64(output_sizes[2]) * output_sizes[1] * output_sizes[0];
 
     const FloatVector & data = msg.data;
+    if (data.size() < input_size)
+    {
+      ROS_ERROR("kinfu_voxelgrid_to_collision_map: data size is %u, expected %u.", unsigned(data.size()), unsigned(input_size));
+      return;
+    }
 
-    std::vector<bool> dangerous(output_size,false);
+    BoolVector dangerous(output_size,false);
 
     // scope only
     {
-      Eigen::Vector3i i;
-      for (i.z() = 0; i.z() < input_sizes.z(); i.z()++)
-        for (i.y() = 0; i.y() < input_sizes.y(); i.y()++)
-          for (i.x() = 0; i.x() < input_sizes.x(); i.x()++)
-            if ( (m_collision_empty && data[IVG_ADDR(i)] < -0.5) ||
-              (m_collision_unknown && data[IVG_ADDR(i)] >= -0.5 && data[IVG_ADDR(i)] < 0.5) ||
-              (m_collision_occupied && data[IVG_ADDR(i)] >= 0.5) )
+      ROS_INFO("kinfu_voxelgrid_to_collision_map: finding dangerous...");
+      const uint64 input_steps_x = input_steps.x();
+      const uint64 input_steps_y = input_steps.y();
+      const uint64 input_steps_z = input_steps.z();
+      const uint64 output_steps_x = output_steps.x();
+      const uint64 output_steps_y = output_steps.y();
+      const uint64 output_steps_z = output_steps.z();
+
+      ROS_INFO("kinfu_voxelgrid_to_collision_map: resampling...");
+      for (uint64 z = 0; z < input_sizes.z(); z++)
+        for (uint64 y = 0; y < input_sizes.y(); y++)
+          for (uint64 x = 0; x < input_sizes.x(); x++)
+          {
+            const uint64 addr = x * input_steps_x + y * input_steps_y + z * input_steps_z;
+            const Eigen::Vector3f ifloat(x, y, z);
+            bool input_dangerous = false;
+            if ( (m_collision_empty && data[addr] < -0.5) ||
+              (m_collision_unknown && data[addr] >= -0.5 && data[addr] < 0.5) ||
+              (m_collision_occupied && data[addr] >= 0.5) )
+              input_dangerous = true;
+
+            if (input_dangerous)
             {
-              Eigen::Vector3i out_i =
-                (i.cast<float>() * m_input_scale / m_output_scale + (Eigen::Vector3f::Ones() * 0.5)).cast<int>();
-              if (OVG_CHECK(out_i))
-                dangerous[OVG_ADDR(out_i)] = true;
+              Eigen::Vector3f out_ifloat = (ifloat * m_input_scale / m_output_scale + (Eigen::Vector3f::Ones() * 0.5));
+              const uint64 ox = out_ifloat.x();
+              const uint64 oy = out_ifloat.y();
+              const uint64 oz = out_ifloat.z();
+              const uint64 oaddr = ox * output_steps_x + oy * output_steps_y + oz * output_steps_z;
+              dangerous[oaddr] = true;
             }
+          }
+      ROS_INFO("kinfu_voxelgrid_to_collision_map: resampled.");
     }
 
     if (m_carve)
@@ -460,6 +505,7 @@ class VoxelgridToCollisionMap
     const Eigen::Vector3i & output_sizes,const Eigen::Vector3i & output_steps,
     TCube::Vector & cubes)
   {
+    ROS_INFO("kinfu_voxelgrid_to_collision_map: compression...");
     BoolVector dangerous = odangerous;
 
     const uint MAX_MULTIPLIER = 5;
@@ -513,6 +559,7 @@ class VoxelgridToCollisionMap
 
   std::vector<bool> Carve(const std::vector<bool> & odangerous,const Eigen::Vector3i & output_sizes,const Eigen::Vector3i & output_steps)
   {
+    ROS_INFO("kinfu_voxelgrid_to_collision_map: carving...");
     Eigen::Vector3i i;
     Eigen::Vector3i di;
     uint64 carved_count = 0;

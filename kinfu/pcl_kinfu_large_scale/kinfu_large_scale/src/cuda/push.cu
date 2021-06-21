@@ -46,7 +46,8 @@ namespace pcl
     namespace kinfuLS
     {
       __global__ void
-      loadTsdfValueKernel (short2* first_point_pointer, float4 *data_ptr, int number_of_points, const int divisor, pcl::gpu::kinfuLS::tsdf_buffer buffer)
+      loadTsdfValueKernel (PtrStep<short2> volume, float4 *data_ptr, int number_of_points, const int divisor,
+                           pcl::gpu::kinfuLS::tsdf_buffer buffer)
       {
         int i = blockDim.x * blockIdx.x  + threadIdx.x;
         if (i < number_of_points)
@@ -68,7 +69,7 @@ namespace pcl
             int dest_y = ( int_y + buffer.origin_GRID.y ) % buffer.voxels_size.y;
             int dest_z = ( int_z + buffer.origin_GRID.z ) % buffer.voxels_size.z;
 
-            short2 *dest_tsdf_index = first_point_pointer + ( buffer.voxels_size.y * buffer.voxels_size.x * dest_z + ( buffer.voxels_size.x * dest_y ) ) + dest_x;
+            short2 *dest_tsdf_index = &(volume.ptr(buffer.voxels_size.y * dest_z + dest_y)[dest_x]);
             (*dest_tsdf_index).x = (*tsdfvalue_ptr).x * divisor;
             (*dest_tsdf_index).y = 1;
           }
@@ -90,16 +91,13 @@ namespace pcl
         
         const int DIVISOR = 32767;
 
-        const short2 *first_point_pointer_const = &(volume.ptr (0)[0]);
-        short2  *first_point_pointer = const_cast<short2*>(first_point_pointer_const);
-
         const int BlockX = 512;
         const int BlockY = 1;
         const int BlockSize = BlockX * BlockY;
         int numBlocks = divUp (number_of_points, BlockSize);
         dim3 threadsPerBlock (BlockX, BlockY);
         
-        loadTsdfValueKernel <<< numBlocks, threadsPerBlock >>> (first_point_pointer, cloud_gpu.ptr(), number_of_points, DIVISOR, *buffer);
+        loadTsdfValueKernel <<< numBlocks, threadsPerBlock >>> (volume, cloud_gpu.ptr(), number_of_points, DIVISOR, *buffer);
         cudaSafeCall ( cudaGetLastError () );
         cudaSafeCall ( cudaDeviceSynchronize () );
       }

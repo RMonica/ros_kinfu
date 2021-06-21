@@ -160,6 +160,10 @@ EIGEN_MAKE_ALIGNED_OPERATOR_NEW
         clearBBox(const Eigen::Vector3i & origin,const Eigen::Vector3f & min,const Eigen::Vector3f & max,bool set_to_empty);
 
         void
+        uploadKnownToBBox(const Eigen::Vector3i & origin, const Eigen::Vector3i & min,
+                          const Eigen::Vector3i & max, DeviceArray2D<short> weights);
+
+        void
         clearCylinder(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,const Eigen::Vector3f & height_bearing,
                       float radius,float half_height,bool set_to_empty);
 

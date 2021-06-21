@@ -1,0 +1,5 @@
+geometry_msgs/Pose cam_pose
+geometry_msgs/Point current_center
+---
+bool do_shift
+geometry_msgs/Point new_center

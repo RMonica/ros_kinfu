@@ -33,6 +33,10 @@ float32 sphere_radius
 # Useful not to count unknown voxels which are between the simulated sensor and the target.
 bool skip_unknown_outside_filter
 
+# If true, for REQUEST_TYPE_GET_VIEW_CLOUD, accurate ray cast interpolation will be used
+# note: use of this with a filter is not implemented yet.
+bool use_accurate_ray_cast_interpolation
+
 # if true, the resulting point cloud will be subsampled
 bool request_subsample
 float32 subsample_voxel_size

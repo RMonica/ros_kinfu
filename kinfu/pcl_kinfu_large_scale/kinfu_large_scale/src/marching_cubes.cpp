@@ -51,7 +51,7 @@ pcl::gpu::kinfuLS::MarchingCubes::MarchingCubes()
 {
   edgeTable_.upload(edgeTable, 256);
   numVertsTable_.upload(numVertsTable, 256);
-  triTable_.upload(&triTable[0][0], 256 * 16);    
+  triTable_.upload(&triTable[0][0], 256 * 16);
 }
 
 pcl::gpu::kinfuLS::MarchingCubes::~MarchingCubes() {}
@@ -64,8 +64,6 @@ pcl::gpu::kinfuLS::MarchingCubes::run(const TsdfVolume& tsdf, DeviceArray<PointT
     triangles_buffer.create(DEFAULT_TRIANGLES_BUFFER_SIZE);
   if (normal_buffer.empty())
     normal_buffer.create(triangles_buffer.size());
-
-  pcl::device::kinfuLS::bindTextures(edgeTable_, triTable_, numVertsTable_);
 
   pcl::gpu::kinfuLS::tsdf_buffer tsdf_buffer;
   tsdf_buffer.tsdf_memory_start = reinterpret_cast<short2*>(tsdf.data().ptr());
@@ -84,11 +82,11 @@ pcl::gpu::kinfuLS::MarchingCubes::run(const TsdfVolume& tsdf, DeviceArray<PointT
   const float tranc_dist = tsdf.getTsdfTruncDist();
 
   const int total_vertices = pcl::device::kinfuLS::generateTrianglesWithNormals(tsdf.data(),tsdf_buffer,tranc_dist,
+    triTable_, numVertsTable_,
     (DeviceArray<pcl::device::kinfuLS::PointType>&)triangles_buffer,
     (DeviceArray<pcl::device::kinfuLS::PointType>&)normal_buffer,
     last_data_transfer_matrix,data_transfer_finished);
     
-  pcl::device::kinfuLS::unbindTextures();
   return DeviceArray<PointType>(triangles_buffer.ptr(), total_vertices);
 }
 

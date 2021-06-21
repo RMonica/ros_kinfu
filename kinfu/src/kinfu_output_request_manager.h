@@ -48,6 +48,7 @@
 
 // Boost
 #include <boost/thread/mutex.hpp>
+#include <boost/thread.hpp>
 
 // ROS custom messages
 #include <kinfu_msgs/RequestAction.h>

@@ -6,6 +6,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   pcl_conversions
   actionlib
+  eigen_conversions
 )
 
 find_package(Boost REQUIRED)
@@ -54,6 +55,36 @@ add_executable(save_voxelgrid src/save_voxelgrid.cpp)
 add_dependencies(save_voxelgrid ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(save_voxelgrid
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+
+add_executable(shift_checker_service src/shift_checker_service.cpp)
+
+add_dependencies(shift_checker_service ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(shift_checker_service
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+
+add_executable(save_tsdf_volume src/save_tsdf_volume.cpp)
+
+add_dependencies(save_tsdf_volume ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(save_tsdf_volume
+  ${catkin_LIBRARIES}
+  ${PCL_LIBRARIES}
+  ${Boost_LIBRARIES}
+)
+
+add_executable(load_tsdf_volume src/load_tsdf_volume.cpp)
+
+add_dependencies(load_tsdf_volume ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
+target_link_libraries(load_tsdf_volume
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES}
   ${Boost_LIBRARIES}

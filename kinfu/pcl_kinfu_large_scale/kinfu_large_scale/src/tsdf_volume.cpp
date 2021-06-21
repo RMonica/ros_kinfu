@@ -191,6 +191,32 @@ pcl::gpu::kinfuLS::TsdfVolume::clearBBox(const Eigen::Vector3i & origin,const Ei
   pcl::device::kinfuLS::clearBBox(volume_,r,o,m,M,set_to_empty);
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void
+pcl::gpu::kinfuLS::TsdfVolume::uploadKnownToBBox(const Eigen::Vector3i & origin,const Eigen::Vector3i & min,
+                                                 const Eigen::Vector3i & max,DeviceArray2D<short> weights)
+{
+  int3 o;
+  o.x = origin.x();
+  o.y = origin.y();
+  o.z = origin.z();
+  int3 m;
+  m.x = min.x();
+  m.y = min.y();
+  m.z = min.z();
+  int3 M;
+  M.x = max.x();
+  M.y = max.y();
+  M.z = max.z();
+  int3 r;
+  r.x = resolution_.x();
+  r.y = resolution_.y();
+  r.z = resolution_.z();
+
+  pcl::device::kinfuLS::uploadKnownToBBox(volume_,r,o,m,M,weights);
+}
+
 void
 pcl::gpu::kinfuLS::TsdfVolume::clearCylinder(const Eigen::Vector3i & origin,const Eigen::Vector3f & center,
                                              const Eigen::Vector3f & height_bearing,

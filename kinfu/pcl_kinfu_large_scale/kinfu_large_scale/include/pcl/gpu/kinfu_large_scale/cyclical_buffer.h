@@ -64,6 +64,7 @@ namespace pcl
       class PCL_EXPORTS CyclicalBuffer
       {
         public:
+          typedef std::vector<bool> BoolVector;
 
           class WeightCubeListener
           {
@@ -73,6 +74,7 @@ namespace pcl
             typedef boost::shared_ptr<WeightCubeListener> Ptr;
             typedef std::vector<Eigen::Vector3i, Eigen::aligned_allocator<Eigen::Vector3i> > Vector3iVector;
             typedef pcl::PointCloud<pcl::PointNormal> PointXYZNormalCloud;
+            typedef std::vector<bool> BoolVector;
 
             // empty virtual constructor to avoid memory leaks
             virtual ~WeightCubeListener() {}
@@ -87,6 +89,10 @@ namespace pcl
             virtual void onClearCylinder(const Eigen::Vector3f & center, const Eigen::Vector3f & height_bearing,
                                          float radius, float half_height,
                                          const bool set_to_known,PointXYZNormalCloud::Ptr cleared_frontier) = 0;
+            virtual void onReplaceBBox(const WeightVector & weights,
+                                       const Eigen::Vector3i & min, const Eigen::Vector3i & max,
+                                       PointXYZNormalCloud::Ptr cleared_frontier) = 0;
+
 
             virtual void onReset() = 0;
 
@@ -128,15 +134,42 @@ namespace pcl
 
             virtual bool acceptsType(const Type type) const = 0;
           };
+
+          // checks for shift interface
+          class IShiftChecker
+          {
+            public:
+            virtual bool CheckForShift(const Eigen::Affine3f & cam_pose, const Eigen::Vector3f & center_cube) = 0;
+              // true if volume must shift
+            virtual Eigen::Vector3f GetNewCubeOrigin(const Eigen::Affine3f & cam_pose) = 0;
+              // if CheckForShift, the new optimal cube origin
+
+            typedef boost::shared_ptr<IShiftChecker> Ptr;
+          };
+
+          class DefaultShiftChecker: public IShiftChecker
+          {
+            public:
+            DefaultShiftChecker(const double distance_camera_target, const double distance_threshold);
+
+            bool CheckForShift(const Eigen::Affine3f & cam_pose, const Eigen::Vector3f & center_cube) override;
+            Eigen::Vector3f GetNewCubeOrigin(const Eigen::Affine3f & cam_pose) override;
+
+            void SetDistanceThreshold(const double distance_threshold) {m_distance_threshold = distance_threshold; }
+            void SetDistanceCameraTarget(const double distance_camera_target) {m_distance_camera_target = distance_camera_target; }
+
+            private:
+            double m_distance_threshold;
+            double m_distance_camera_target;
+          };
           
           /** \brief Constructor for a cubic CyclicalBuffer.
             * \param[in] distance_threshold distance between cube center and target point at which we decide to shift.
             * \param[in] cube_size physical size (in meters) of the volume (here, a cube) represented by the TSDF buffer.
             * \param[in] nb_voxels_per_axis number of voxels per axis of the volume represented by the TSDF buffer.
             */
-          CyclicalBuffer (const double distance_threshold, const double cube_size = 3.f, const int nb_voxels_per_axis = 512)
+          CyclicalBuffer (const double cube_size = 3.f, const int nb_voxels_per_axis = 512)
           {
-            distance_threshold_ = distance_threshold;
             buffer_.volume_size.x = cube_size; 
             buffer_.volume_size.y = cube_size; 
             buffer_.volume_size.z = cube_size;
@@ -160,10 +193,9 @@ namespace pcl
             * \param[in] nb_voxels_y number of voxels for Y axis of the volume represented by the TSDF buffer.
             * \param[in] nb_voxels_z number of voxels for Z axis of the volume represented by the TSDF buffer.
             */
-          CyclicalBuffer (const double distance_threshold, const double volume_size_x, const double volume_size_y,
+          CyclicalBuffer (const double volume_size_x, const double volume_size_y,
             const double volume_size_z, const int nb_voxels_x, const int nb_voxels_y, const int nb_voxels_z)
           {
-            distance_threshold_ = distance_threshold;
             buffer_.volume_size.x = volume_size_x; 
             buffer_.volume_size.y = volume_size_y; 
             buffer_.volume_size.z = volume_size_z;
@@ -174,6 +206,7 @@ namespace pcl
             buffer_.voxels_volume_padding.y = 0;
             buffer_.voxels_volume_padding.z = 0;
             extract_known_points_ = false;
+            old_cube_retrieved_ = true;
           }
 
           /** \brief Check if shifting needs to be performed, returns true if so.
@@ -189,12 +222,26 @@ namespace pcl
             * \return true is the cube needs to be or has been shifted.
             */
           bool checkForShift (const TsdfVolume::Ptr volume,
+                              const Eigen::Affine3f &initial_cam_pose,
                               const Eigen::Affine3f &cam_pose,
-                              const double distance_camera_target,
-                              const double distance_threshold,
+                              IShiftChecker & shift_checker,
                               const bool perform_shift = true,
                               const bool last_shift = false,
                               const bool force_shift = false);
+
+          /** \brief replaces data in bounding box
+           */
+          void pushTSDFCloudToTSDF(const TsdfVolume::Ptr volume,
+                                   const pcl::PointCloud<pcl::PointXYZI>::ConstPtr tsdf_cloud,
+                                   const Eigen::Vector3i & bbox_min,
+                                   const Eigen::Vector3i & bbox_max);
+
+          /** \brief adds weights data in bounding box
+           */
+          void pushWeightsToTSDF(const TsdfVolume::Ptr volume,
+                                 const std::vector<short> & weights,
+                                 const Eigen::Vector3i & bbox_min,
+                                 const Eigen::Vector3i & bbox_max);
           
           /** \brief Perform shifting operations:
               Compute offsets.
@@ -206,21 +253,8 @@ namespace pcl
               Update world model. 
             * \param[in] volume pointer to the TSDFVolume living in GPU
             * \param[in] target_point target point around which the new cube will be centered
-            * \param[in] last_shift if set to true, the whole cube will be shifted. This is used to push the whole cube to the world model.
             */
-          void performShift (const TsdfVolume::Ptr volume, const pcl::PointXYZ &target_point, const bool last_shift = false);
-
-          /** \brief Sets the distance threshold between cube's center and target point that triggers a shift.
-            * \param[in] threshold the distance in meters at which to trigger shift.
-            */
-          void setDistanceThreshold (const double threshold) 
-          { 
-            distance_threshold_ = threshold; 
-            // PCL_INFO ("Shifting threshold set to %f meters.\n", distance_threshold_);
-          }
-
-          /** \brief Returns the distance threshold between cube's center and target point that triggers a shift. */
-          float getDistanceThreshold () { return (distance_threshold_); }
+          void performShift (const TsdfVolume::Ptr volume, const pcl::PointXYZ &target_point);
 
           /** \brief get a pointer to the tsdf_buffer structure.
             * \return a pointer to the tsdf_buffer used by cyclical buffer object.
@@ -341,9 +375,6 @@ namespace pcl
 
           /** \brief buffer used to keep track of extraction status */
           DeviceArray2D<int> last_data_transfer_matrix_device_;
-
-          /** \brief distance threshold (cube's center to target point) to trigger shift */
-          double distance_threshold_;
           
           /** \brief world model object that maintains the occupied world */
           pcl::kinfuLS::WorldModel<pcl::PointXYZI> world_model_;

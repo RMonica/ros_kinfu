@@ -102,7 +102,7 @@ namespace pcl
         /** \brief Append a new point cloud (slice) to the world.
           * \param[in] new_cloud the point cloud to add to the world
           */
-        void addSlice (const PointCloudPtr new_cloud);
+        void addSlice (const PointCloudConstPtr new_cloud);
 
 
         /** \brief Retreive existing data from the world model, after a shift
@@ -134,7 +134,12 @@ namespace pcl
           */                    
         void setSliceAsNans (const double origin_x, const double origin_y, const double origin_z,
                             const double offset_x, const double offset_y, const double offset_z,
-                            const int size_x, const int size_y, const int size_z);            
+                            const int size_x, const int size_y, const int size_z);
+
+        /** \brief set bounding box to nan
+         */
+        void setFullCubeAsNans (const double origin_x, const double origin_y, const double origin_z,
+                                const int size_x, const int size_y, const int size_z);
 
         /** \brief Remove points with nan values from the world.
           */

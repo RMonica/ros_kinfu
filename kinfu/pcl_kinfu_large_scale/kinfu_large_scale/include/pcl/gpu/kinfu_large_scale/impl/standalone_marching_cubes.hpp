@@ -257,11 +257,11 @@ pcl::gpu::kinfuLS::StandaloneMarchingCubes<PointT>::convertTsdfVectors (const Po
  	
 	for(int i = 0; i < (int) cloud.points.size (); ++i)
 	{
-	  int x = cloud.points[i].x;
-	  int y = cloud.points[i].y;
-	  int z = cloud.points[i].z;
+          int x = cloud.points[i].x + 0.5;
+          int y = cloud.points[i].y + 0.5;
+          int z = cloud.points[i].z + 0.5;
 	  
-	  if(x > 0  && x < voxels_x_ && y > 0 && y < voxels_y_ && z > 0 && z < voxels_z_)
+          if(x >= 0  && x < voxels_x_ && y >= 0 && y < voxels_y_ && z >= 0 && z < voxels_z_)
 	  {
 	  ///Calculate the index to write to
 	  int dst_index = x + voxels_x_ * y + voxels_y_ * voxels_x_ * z;

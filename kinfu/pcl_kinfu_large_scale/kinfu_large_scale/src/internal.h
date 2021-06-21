@@ -221,7 +221,7 @@ namespace pcl
        * @param origin the current volume origin (due to volume shifting)
        * @param min the min value of the bounding box
        * @param max the max value of the bounding box
-       * @param set_to_empty set the sphere to empty instead of unknown
+       * @param set_to_empty set the bounding box to empty instead of unknown
        */
       void
       clearBBox(PtrStep<short2> volume,const int3 voxels_size,const int3& origin,const float3& min,const float3& max,
@@ -289,6 +289,10 @@ namespace pcl
 
       PCL_EXPORTS void
       uploadKnownToTSDFSlice (PtrStep<short2> volume, pcl::gpu::kinfuLS::tsdf_buffer* buffer, int shiftX, int shiftY, int shiftZ,
+        PtrStep<short> known_status);
+
+      PCL_EXPORTS void
+      uploadKnownToBBox (PtrStep<short2> volume, const int3 voxels_size,const int3& origin,const int3& min,const int3& max,
         PtrStep<short> known_status);
       
       /** \brief Initialzied color volume
@@ -400,6 +404,21 @@ namespace pcl
                             const RaycastFilter & filter, const bool skip_unknown_outside_filter,
                             MapArr& vmap, MapArr& umap, PtrStep<int> voxel_ids,
                             const float3 & bbox_min, const float3 & bbox_max);
+
+      void
+      unkRaycastInterp (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                        float tranc_dist, float min_range, const float3& volume_size,
+                        const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                        const RaycastFilter & filter, const bool skip_unknown_outside_filter,
+                        MapArr& vmap, MapArr& umap, MapArr& nmap);
+
+      void
+      unkRaycastInterpBBox (const Intr& intr, const Mat33& Rcurr, const float3& tcurr,
+                            float tranc_dist, float min_range, const float3& volume_size,
+                            const PtrStep<short2>& volume, const pcl::gpu::kinfuLS::tsdf_buffer* buffer,
+                            const RaycastFilter & filter, const bool skip_unknown_outside_filter,
+                            MapArr& vmap, MapArr& umap, MapArr& nmap,
+                            const float3 & bbox_min,const float3 & bbox_max);
 
       /** \brief Renders 3D image of the scene
         * \param[in] vmap vertex map
@@ -554,14 +573,6 @@ namespace pcl
    
       ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       // Marching cubes implementation
-
-      /** \brief Binds marching cubes tables to texture references */
-      void 
-      bindTextures(const int *edgeBuf, const int *triBuf, const int *numVertsBuf);            
-      
-      /** \brief Unbinds */
-      void 
-      unbindTextures();
       
       /** \brief Scans tsdf volume and retrieves occuped voxes
         * \param[in] volume tsdf volume
@@ -587,6 +598,7 @@ namespace pcl
       int
       generateTrianglesWithNormals (const PtrStep<short2>& volume,
         const pcl::gpu::kinfuLS::tsdf_buffer & buffer, float tranc_dist,
+        DeviceArray<int> & tri_tex, DeviceArray<int> & num_verts_tex,
         DeviceArray<PointType>& output, DeviceArray<PointType>& normals,
         PtrStep<int> last_data_transfer_matrix, int & data_transfer_finished);
     }
